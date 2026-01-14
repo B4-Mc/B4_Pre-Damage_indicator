@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "b4_pre-damage_indicator",
+  "version": "${version}",
+  "name": "B4_Pre-Damage_indicator",
+  "description": "",
+  "authors": ["_B4__"],
+  "contact": {
+    "homepage": "https://modrinth.com/user/_B4__"
+  },
+  "license": "MIT",
+  "icon": "assets/predamage/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "client": [
+      "com.b4.mod.ClientInit"
+    ],
+    "main": [
+      "com.b4.predamage.B4PreDamage"
+    ]
+  },
+  "mixins": [
+    "b4_pre-damage_indicator.mixins.json"
+  ],
+  "modmenu": [
+    "com.b4.predamage.client.ModMenuIntegration"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "fabric-api": "*",
+    "minecraft": "~1.21.11"
+  }
+}
