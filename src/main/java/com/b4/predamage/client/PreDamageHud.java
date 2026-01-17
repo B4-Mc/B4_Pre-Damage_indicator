@@ -131,7 +131,7 @@ public class PreDamageHud {
 
                 total += (float) (velocity * 20.0);
             } else if (p.fallDistance > 0.5F && !p.isOnGround() && p.getVelocity().y < -0.1) {
-                total *= 1.5F; // Standard melee crit
+                total *= 1.5F;
             }
             return total;
         }
