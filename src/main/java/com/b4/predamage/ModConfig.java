@@ -8,13 +8,11 @@ import java.awt.Color;
 
 public class ModConfig {
     public static boolean modEnabled = true;
-    public static Color indicatorColor = Color.WHITE; // CHANGED to White so we can see if it works!
+    public static Color indicatorColor = Color.WHITE;
     public static int opacity = 255;
-
     public static Screen createGui(Screen parent) {
         return YetAnotherConfigLib.createBuilder()
                 .title(Text.literal("B4 Pre-Damage Settings"))
-                // Some YACL versions REQUIRE the save block to not be null
                 .save(() -> {
                     System.out.println("Settings saved!");
                 })

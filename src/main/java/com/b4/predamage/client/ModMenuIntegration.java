@@ -1,6 +1,5 @@
 package com.b4.predamage.client;
-
-import com.b4.predamage.ModConfig; // Matches the file we just created
+import com.b4.predamage.ModConfig;
 import com.terraformersmc.modmenu.api.ConfigScreenFactory;
 import com.terraformersmc.modmenu.api.ModMenuApi;
 

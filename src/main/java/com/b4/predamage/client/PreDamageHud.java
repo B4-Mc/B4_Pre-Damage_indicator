@@ -117,13 +117,11 @@ public class PreDamageHud {
             strengthBonus = (3.0F * (p.getStatusEffect(StatusEffects.STRENGTH).getAmplifier() + 1));
         }
 
-// Spear Logic: Handle Melee Crits vs Velocity Charging (including Mounts)
         if (n.contains("spear")) {
             float base = n.contains("netherite") ? 5.0F : n.contains("diamond") ? 4.0F : n.contains("iron") ? 3.0F : 2.0F;
             float total = base + enchantExtra + strengthBonus;
 
             if (p.isUsingItem() && p.getActiveItem() == s) {
-                // Determine velocity: Use mount's velocity if riding, otherwise player's
                 double velocity;
                 if (p.getVehicle() != null) {
                     velocity = p.getVehicle().getVelocity().length();
@@ -131,7 +129,6 @@ public class PreDamageHud {
                     velocity = p.getVelocity().length();
                 }
 
-                // 20.0 is a good multiplier for Minecraft's internal velocity units
                 total += (float) (velocity * 20.0);
             } else if (p.fallDistance > 0.5F && !p.isOnGround() && p.getVelocity().y < -0.1) {
                 total *= 1.5F; // Standard melee crit
@@ -257,10 +254,8 @@ public class PreDamageHud {
         if (n.contains("mace") && c.player.fallDistance > 1.5F) return 100.0F;
         if (s.isOf(Items.BOW) || (s.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(s))) return 30.0F;
 
-        // Spear/Trident special reach
         if ((s.isOf(Items.TRIDENT) || n.contains("spear")) && c.player.isUsingItem()) return 30.0F;
 
-        // EXTRA: Spear jab melee range (4.5 instead of 3.5)
         if (n.contains("spear")) return 4.5F;
 
         return 3.5F;
