@@ -19,9 +19,6 @@ public class ClientInit implements ClientModInitializer {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player == null) return;
 
-            // Call through the class name if method is static
-            PreDamageHud.processHand(client, drawContext, client.player.getMainHandStack(), true);
-            PreDamageHud.processHand(client, drawContext, client.player.getOffHandStack(), false);
         });
     }
 }
