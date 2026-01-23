@@ -15,16 +15,13 @@ public class ClientInit implements ClientModInitializer {
     public void onInitializeClient() {
         System.out.println(">>> CLIENT INIT IS RUNNING! <<<");
 
-        HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
+        HudRenderCallback.EVENT.register((drawContext, tickDelta) -> {
             MinecraftClient client = MinecraftClient.getInstance();
-            if (client == null || client.player == null) return;
+            if (client.player == null) return;
 
-            TextRenderer renderer = client.textRenderer;
-
-            // 3. Run your HUD logic
-            if (HUD_INSTANCE != null) {
-                HUD_INSTANCE.onHudRender(drawContext, tickCounter);
-            }
+            // Call through the class name if method is static
+            PreDamageHud.processHand(client, drawContext, client.player.getMainHandStack(), true);
+            PreDamageHud.processHand(client, drawContext, client.player.getOffHandStack(), false);
         });
     }
 }
