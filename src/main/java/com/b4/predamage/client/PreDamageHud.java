@@ -38,16 +38,22 @@ public class PreDamageHud {
 
     // 2. The Main Processing Logic
     public static void processHand(MinecraftClient client, DrawContext ctx, ItemStack stack, boolean isMain) {
-        if (client.player == null || stack.isEmpty()) {
-            if (isMain) mainDisplayed = 0.0F;
-            else offDisplayed = 0.0F;
+        if (client.player == null) return;
+
+        // Main hand can be empty (fists), off-hand ignores empty
+        if (!isMain && stack.isEmpty()) {
+            offDisplayed = 0.0f;
             return;
         }
 
         String name = stack.getItem().toString().toLowerCase();
-
-        // Critical: Using the stack reference itself to detect usage (Best for Off-hand reliability)
         boolean isUsingThisHand = client.player.isUsingItem() && client.player.getActiveItem() == stack;
+
+        // Strict Filter for Off-hand "X"
+        boolean isRightClickWeapon = stack.isOf(Items.BOW) ||
+                stack.isOf(Items.CROSSBOW) ||
+                stack.isOf(Items.TRIDENT) ||
+                name.contains("spear");
 
         float reach = getReach(client, stack, name);
         Entity target = getTarget(client, reach);
@@ -76,77 +82,56 @@ public class PreDamageHud {
                     finalColor = isHealing ? 0xFF00FF00 : 0xFF990000; // Lime and Crimson
                 }
             }
-            // --- SPEAR LOGIC (Mount-Aware Velocity) ---
+            // --- 2. SPEAR LOGIC (1.21.11 3D Momentum) ---
             else if (name.contains("spear")) {
                 if (isUsingThisHand) {
-                    // Check if riding a mount (Horse, Camel, etc.)
-                    Entity vehicle = client.player.getVehicle();
-                    double horizontalVelocity;
-
-                    if (vehicle != null) {
-                        // Use the mount's velocity if riding
-                        horizontalVelocity = vehicle.getVelocity().horizontalLength();
-                    } else {
-                        // Use the player's velocity if on foot
-                        horizontalVelocity = client.player.getVelocity().horizontalLength();
-                    }
-
-                    // Convert to blocks per second (approx 20 ticks)
-                    double velocityInBps = horizontalVelocity * 20.0;
-                    finalValue = Math.max(5.0f, (float) (velocityInBps * 1.25f));
+                    // Includes vertical (Y) momentum for diving attacks
+                    double velocity = client.player.getVelocity().length() * 20.0;
+                    finalValue = Math.max(5.0f, (float) (velocity * 1.25f));
                 } else {
-                    if (isMain) {
-                        finalValue = calculateRawPhysical(client, client.player, stack, name);
-                    } else {
-                        finalValue = 0.0f; // Keep the "X" for idle off-hand
-                    }
+                    finalValue = isMain ? calculateRawPhysical(client, client.player, stack, name) : 0.0f;
                 }
                 finalColor = getColor(livingTarget, finalValue);
             }
-            // --- TRIDENT / OTHERS ---
-            else if (stack.isOf(Items.TRIDENT)) {
-                if (isUsingThisHand) {
-                    finalValue = 8.0f;
-                } else if (isMain) {
+            // --- 3. PROJECTILE WEAPONS ---
+            else if (stack.isOf(Items.TRIDENT) || stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW)) {
+                if (isUsingThisHand || (stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack))) {
                     finalValue = calculateRawPhysical(client, client.player, stack, name);
                 } else {
-                    finalValue = 0;
+                    finalValue = isMain ? calculateRawPhysical(client, client.player, stack, name) : 0.0f;
                 }
                 finalColor = getColor(livingTarget, finalValue);
-            } else {
-                finalValue = applyFinalReductions(livingTarget, stack, calculateRawPhysical(client, client.player, stack, name), calculateMagicBonus(client.player, stack, livingTarget));
-                finalColor = getColor(livingTarget, finalValue);
             }
-
-            // Totem Check
-            if (finalValue > 0 && isEnemyHoldingTotem(livingTarget) && finalValue >= livingTarget.getHealth()) {
-                finalColor = 0xFFFFFF00;
+            // --- 4. GENERAL MELEE / FISTS ---
+            else {
+                if (isMain) {
+                    finalValue = applyFinalReductions(livingTarget, stack, calculateRawPhysical(client, client.player, stack, name), calculateMagicBonus(client.player, stack, livingTarget));
+                } else {
+                    if (!isRightClickWeapon) return;
+                    finalValue = 0.0f;
+                }
+                finalColor = getColor(livingTarget, finalValue);
             }
 
             // --- RENDERING ---
             boolean useAsterisk = (stack.isOf(Items.BOW) && isUsingThisHand) || (stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack));
 
             if (isMain) {
-                if (stack.isOf(Items.SPLASH_POTION)) mainDisplayed = finalValue;
-                else handleMainSmoothing(client, name, finalValue);
-                if (finalValue > 0)
+                handleMainSmoothing(client, name, finalValue);
+                if (finalValue > 0 || stack.isEmpty()) {
                     renderIndicator(ctx, client, mainDisplayed, finalColor, true, false, useAsterisk, isHealing);
+                }
             } else {
-                offDisplayed = MathHelper.lerp(0.20F, offDisplayed, finalValue);
                 if (finalValue > 0) {
+                    offDisplayed = MathHelper.lerp(0.20F, offDisplayed, finalValue);
                     renderIndicator(ctx, client, offDisplayed, finalColor, false, false, useAsterisk, isHealing);
-                } else if (!isUsingThisHand) {
+                } else if (isRightClickWeapon) {
                     renderIndicator(ctx, client, 0.0F, 0xFFFF0000, false, true, false, false);
                 }
             }
         } else {
             if (isMain) mainDisplayed = 0.0f;
-            else {
-                offDisplayed = 0.0f;
-                if (getTarget(client, 3.5f) instanceof LivingEntity && !isUsingThisHand) {
-                    renderIndicator(ctx, client, 0.0F, 0xFFFF0000, false, true, false, false);
-                }
-            }
+            else offDisplayed = 0.0f;
         }
     }
 
