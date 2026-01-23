@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "b4_pre-damage_indicator",
   "version": "${version}",
-  "name": "B4's Pre-Damage indicator",
+  "name": "B4s Pre-Damage indicator",
   "description": "The first pre-damage indicator to Minecraft!",
   "authors": ["_B4__"],
   "contact": {
