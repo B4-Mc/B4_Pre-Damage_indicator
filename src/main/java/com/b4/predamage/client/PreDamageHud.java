@@ -84,14 +84,7 @@ public class PreDamageHud {
                             isHealing = isUndead;
                         }
                     }
-
                     if (livingTarget instanceof net.minecraft.entity.boss.dragon.EnderDragonEntity) finalValue = 0;
-
-                    if (!isHealing && isEnemyHoldingTotem(livingTarget) && finalValue >= livingTarget.getHealth()) {
-                        finalColor = 0xFFF2FF00;
-                    } else {
-                        finalColor = isHealing ? 0xFF00FF00 : 0xFF990000;
-                    }
                 }
             } else if (stack.isOf(Items.TRIDENT)) {
                 isProjectile = true;
@@ -109,7 +102,6 @@ public class PreDamageHud {
                 } else {
                     finalValue = isMain ? applyFinalReductions(livingTarget, stack, 9.0f + bonus, 0, false) : 0.0f;
                 }
-                finalColor = getColor(livingTarget, finalValue);
             } else if (name.contains("spear")) {
                 if (isUsingThisHand) {
                     isProjectile = true;
@@ -119,7 +111,6 @@ public class PreDamageHud {
                 } else {
                     finalValue = isMain ? applyFinalReductions(livingTarget, stack, calculateRawPhysical(client, client.player, stack, name), 0, false) : 0.0f;
                 }
-                finalColor = getColor(livingTarget, finalValue);
             } else if (stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW)) {
                 isProjectile = true;
                 if (isUsingThisHand || (stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack))) {
@@ -129,7 +120,6 @@ public class PreDamageHud {
                 } else {
                     finalValue = isMain ? applyFinalReductions(livingTarget, stack, calculateRawPhysical(client, client.player, stack, name), 0, true) : 0.0f;
                 }
-                finalColor = getColor(livingTarget, finalValue);
             } else {
                 if (isMain) {
                     float phys = calculateRawPhysical(client, client.player, stack, name);
@@ -139,23 +129,32 @@ public class PreDamageHud {
                     if (!isRightClickWeapon) return;
                     finalValue = 0.0f;
                 }
-                finalColor = getColor(livingTarget, finalValue);
             }
 
             if (livingTarget instanceof net.minecraft.entity.boss.dragon.EnderDragonEntity dragon) {
-
-                finalValue = (finalValue * dragonMultiplier) * 0.25f;
+                if (dragonMultiplier == 4.0f) {
+                    finalValue = finalValue;
+                } else {
+                    finalValue = (finalValue * 0.25f) + 1.0f;
+                }
 
                 int phaseId = dragon.getDataTracker().get(net.minecraft.entity.boss.dragon.EnderDragonEntity.PHASE_TYPE);
                 boolean isPerched = (phaseId >= 4 && phaseId <= 7);
                 boolean isSpear = name.contains("spear");
 
-                if (isPerched) {
-
-                    if (isProjectile && !isSpear) {
-                        finalValue = 0;
-                    }
+                if (isPerched && isProjectile && !isSpear) {
+                    finalValue = 0;
                 }
+            }
+
+            if (stack.isOf(Items.SPLASH_POTION)) {
+                if (!isHealing && isEnemyHoldingTotem(livingTarget) && finalValue >= livingTarget.getHealth()) {
+                    finalColor = 0xFFF2FF00; // Totem Yellow
+                } else {
+                    finalColor = isHealing ? 0xFF00FF00 : 0xFF990000;
+                }
+            } else {
+                finalColor = getColor(livingTarget, finalValue);
             }
 
             boolean useAsterisk = (stack.isOf(Items.BOW) && isUsingThisHand) || (stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack));
