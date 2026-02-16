@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "b4_pre-damage_indicator",
-  "version": "${version}",
+  "version": "1.2-beta",
   "name": "B4's Pre-Damage indicator",
   "description": "The first pre-damage indicator to Minecraft!",
   "authors": ["_B4__"],
@@ -11,7 +11,7 @@
   },
   "license": "MIT",
   "icon": "assets/predamage/icon.png",
-  "environment": "*",
+  "environment": "Client",
   "entrypoints": {
     "client": [
       "com.b4.mod.ClientInit"
