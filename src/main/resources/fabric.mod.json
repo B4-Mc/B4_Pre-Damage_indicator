@@ -7,7 +7,8 @@
   "authors": ["imB4"],
   "contact": {
     "homepage": "https://github.com/B4-Mc/B4_Pre-Damage_indicator",
-    "issues": "https://github.com/B4-Mc/B4_Pre-Damage_indicator/issues"
+    "issues": "https://github.com/B4-Mc/B4_Pre-Damage_indicator/issues",
+    "sources": "https://github.com/B4-Mc/B4_Pre-Damage_indicator"
   },
   "license": "MIT",
   "icon": "assets/predamage/icon.png",
