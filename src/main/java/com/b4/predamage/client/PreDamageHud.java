@@ -42,6 +42,7 @@ public class PreDamageHud {
     public static void processHand(MinecraftClient client, DrawContext ctx, ItemStack stack, boolean isMain) {
         if (client.player == null || client.world == null) return;
 
+        // Mace fall tracking logic
         if (client.player.isOnGround()) {
             maceFallStartY = -1.0;
         } else if (maceFallStartY == -1.0 && client.player.getVelocity().y < -0.1) {
@@ -69,7 +70,7 @@ public class PreDamageHud {
             return;
         }
 
-        // Standard Crit Detection (Falling, not on ground, not in water, etc.)
+        // Standard Crit Logic (Vanilla conditions)
         boolean isCrit = client.player.fallDistance > 0.0F
                 && !client.player.isOnGround()
                 && !client.player.isClimbing()
@@ -77,10 +78,8 @@ public class PreDamageHud {
                 && !client.player.hasStatusEffect(StatusEffects.BLINDNESS)
                 && !client.player.hasVehicle();
 
-        // SPEAR FIX: Spears cannot crit. If it's a spear, we force isCrit to false.
-        if (isSpear) {
-            isCrit = false;
-        }
+        // Spear logic: Cannot crit
+        if (isSpear) isCrit = false;
 
         float finalValue = 0;
         int finalColor = 0xFFFFFFFF;
@@ -128,7 +127,7 @@ public class PreDamageHud {
             finalValue = applyFinalReductions(client, livingTarget, stack, phys, mag, isActuallyProjectile, isCrit && !isActuallyProjectile);
         }
 
-        // Immunity Checks
+        // Immunity Logic
         if (livingTarget instanceof WolfEntity wolf && !wolf.getBodyArmor().isEmpty()) {
             if (!stack.isOf(Items.SPLASH_POTION)) finalValue = 0;
         }
@@ -143,16 +142,21 @@ public class PreDamageHud {
         }
 
         finalColor = getColor(livingTarget, finalValue, stack, isHealing);
-        // showCritMarker handles the asterisk. Force it to false for spears.
-        boolean showCritMarker = isCrit && !isActuallyProjectile && !isSpear;
-        boolean useAsterisk = (stack.isOf(Items.BOW) && isUsingThisHand) || (stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack)) || showCritMarker;
+
+        // UI Indicators: ^ for crit, * for charged projectiles
+        String suffix = "";
+        if (isCrit && !isActuallyProjectile && !isSpear) {
+            suffix = "^";
+        } else if ((stack.isOf(Items.BOW) && isUsingThisHand) || (stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack))) {
+            suffix = "*";
+        }
 
         if (isMain) {
             handleMainSmoothing(finalValue);
-            renderIndicator(ctx, client, mainDisplayed, finalColor, true, useAsterisk, isHealing);
+            renderIndicator(ctx, client, mainDisplayed, finalColor, true, suffix, isHealing);
         } else if (finalValue > 0) {
             offDisplayed = MathHelper.lerp(0.20F, offDisplayed, finalValue);
-            renderIndicator(ctx, client, offDisplayed, finalColor, false, useAsterisk, isHealing);
+            renderIndicator(ctx, client, offDisplayed, finalColor, false, suffix, isHealing);
         }
     }
 
@@ -267,6 +271,7 @@ public class PreDamageHud {
 
     private static float getReach(MinecraftClient c, ItemStack s, String n) {
         if (c.player == null) return 3.5F;
+        // FIXED: Changed 'stack' to 's' to match the method parameter name
         boolean using = c.player.isUsingItem() && c.player.getActiveItem() == s;
         if (s.isOf(Items.MACE) && c.player.fallDistance > 0.0f) return 100.0F;
         if (n.contains("spear") && using) return 100.0F;
@@ -301,9 +306,9 @@ public class PreDamageHud {
         return e.getEquippedStack(EquipmentSlot.MAINHAND).isOf(Items.TOTEM_OF_UNDYING) || e.getEquippedStack(EquipmentSlot.OFFHAND).isOf(Items.TOTEM_OF_UNDYING);
     }
 
-    private static void renderIndicator(DrawContext ctx, MinecraftClient c, float dmg, int color, boolean isMain, boolean useAsterisk, boolean isHealing) {
+    private static void renderIndicator(DrawContext ctx, MinecraftClient c, float dmg, int color, boolean isMain, String suffix, boolean isHealing) {
         if (dmg < 0.1F) return;
-        String txt = (isHealing ? "+" : "") + String.format("%.1f", dmg) + (useAsterisk ? "*" : "");
+        String txt = (isHealing ? "+" : "") + String.format("%.1f", dmg) + suffix;
         int centerX = c.getWindow().getScaledWidth() / 2;
         int centerY = (c.getWindow().getScaledHeight() / 2) - 4;
         int x = isMain ? centerX + 15 : centerX - 15 - c.textRenderer.getWidth(txt);
