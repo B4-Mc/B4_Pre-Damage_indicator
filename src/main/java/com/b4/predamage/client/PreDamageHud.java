@@ -54,6 +54,7 @@ public class PreDamageHud {
         }
 
         String name = stack.getItem().toString().toLowerCase();
+        boolean isSpear = name.contains("spear");
         boolean isUsingThisHand = client.player.isUsingItem() && client.player.getActiveItem() == stack;
         float reach = getReach(client, stack, name);
         Entity target = getTarget(client, reach);
@@ -66,6 +67,19 @@ public class PreDamageHud {
         if (livingTarget instanceof CreakingEntity) {
             if (isMain) mainDisplayed = 0.0f; else offDisplayed = 0.0f;
             return;
+        }
+
+        // Standard Crit Detection (Falling, not on ground, not in water, etc.)
+        boolean isCrit = client.player.fallDistance > 0.0F
+                && !client.player.isOnGround()
+                && !client.player.isClimbing()
+                && !client.player.isTouchingWater()
+                && !client.player.hasStatusEffect(StatusEffects.BLINDNESS)
+                && !client.player.hasVehicle();
+
+        // SPEAR FIX: Spears cannot crit. If it's a spear, we force isCrit to false.
+        if (isSpear) {
+            isCrit = false;
         }
 
         float finalValue = 0;
@@ -96,36 +110,32 @@ public class PreDamageHud {
                 }
                 if (livingTarget instanceof EnderDragonEntity) finalValue = 0;
             }
-        } else if (name.contains("spear") && isUsingThisHand) {
+        } else if (isSpear && isUsingThisHand) {
             Vec3d playerVel = client.player.getVelocity();
             if (client.player.getVehicle() != null) playerVel = client.player.getVehicle().getVelocity();
             Vec3d relativeVel = playerVel.subtract(target.getVelocity());
             double speedBps = relativeVel.length() * 20.0;
             float base = name.contains("netherite") ? 8.0f : 5.0f;
             float raw = (float) (base + (speedBps * 0.8f));
-            finalValue = applyFinalReductions(client, livingTarget, stack, raw, 0, false);
+            finalValue = applyFinalReductions(client, livingTarget, stack, raw, 0, false, false);
         } else if (stack.isOf(Items.MACE) && !client.player.isOnGround()) {
             float fallDist = (float) (maceFallStartY != -1.0 ? Math.max(0, maceFallStartY - client.player.getY()) : 0);
-
-            // SLOW FALLING FIX
             if (client.player.hasStatusEffect(StatusEffects.SLOW_FALLING)) fallDist = 0;
-
-            finalValue = applyFinalReductions(client, livingTarget, stack, calculateMaceDamage(client, stack, fallDist), 0, false);
+            finalValue = applyFinalReductions(client, livingTarget, stack, calculateMaceDamage(client, stack, fallDist), 0, false, isCrit);
         } else {
             float phys = calculateRawPhysical(client, client.player, stack, name);
             float mag = calculateMagicBonus(client.player, stack, livingTarget);
-            finalValue = applyFinalReductions(client, livingTarget, stack, phys, mag, isActuallyProjectile);
+            finalValue = applyFinalReductions(client, livingTarget, stack, phys, mag, isActuallyProjectile, isCrit && !isActuallyProjectile);
         }
 
+        // Immunity Checks
         if (livingTarget instanceof WolfEntity wolf && !wolf.getBodyArmor().isEmpty()) {
             if (!stack.isOf(Items.SPLASH_POTION)) finalValue = 0;
         }
-
         if (livingTarget instanceof EndermanEntity && isActuallyProjectile) finalValue = 0;
         if (livingTarget instanceof WitherEntity wither && wither.getHealth() <= wither.getMaxHealth() / 2.0f) {
             if (isActuallyProjectile) finalValue = 0;
         }
-
         if (livingTarget instanceof EnderDragonEntity) {
             finalValue = (dragonMultiplier == 4.0f) ? finalValue : (finalValue * 0.25f) + 1.0f;
             int phaseId = livingTarget.getDataTracker().get(EnderDragonEntity.PHASE_TYPE);
@@ -133,7 +143,9 @@ public class PreDamageHud {
         }
 
         finalColor = getColor(livingTarget, finalValue, stack, isHealing);
-        boolean useAsterisk = (stack.isOf(Items.BOW) && isUsingThisHand) || (stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack));
+        // showCritMarker handles the asterisk. Force it to false for spears.
+        boolean showCritMarker = isCrit && !isActuallyProjectile && !isSpear;
+        boolean useAsterisk = (stack.isOf(Items.BOW) && isUsingThisHand) || (stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack)) || showCritMarker;
 
         if (isMain) {
             handleMainSmoothing(finalValue);
@@ -144,10 +156,14 @@ public class PreDamageHud {
         }
     }
 
-    private static float applyFinalReductions(MinecraftClient client, LivingEntity t, ItemStack s, float phys, float magic, boolean isProj) {
+    private static float applyFinalReductions(MinecraftClient client, LivingEntity t, ItemStack s, float phys, float magic, boolean isProj, boolean isCrit) {
         float armor = (float) t.getAttributeValue(EntityAttributes.ARMOR);
         float toughness = (float) t.getAttributeValue(EntityAttributes.ARMOR_TOUGHNESS);
         var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
+
+        if (isCrit) {
+            phys *= 1.5F;
+        }
 
         float extra = 0;
         int sharp = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.SHARPNESS), s);
