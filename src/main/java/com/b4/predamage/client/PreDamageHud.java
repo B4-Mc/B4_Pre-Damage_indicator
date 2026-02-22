@@ -42,43 +42,53 @@ public class PreDamageHud {
     public static void processHand(MinecraftClient client, DrawContext ctx, ItemStack stack, boolean isMain) {
         if (client.player == null || client.world == null) return;
 
-        // Mace fall tracking logic
+        // Mace fall tracking
         if (client.player.isOnGround()) {
             maceFallStartY = -1.0;
         } else if (maceFallStartY == -1.0 && client.player.getVelocity().y < -0.1) {
             maceFallStartY = client.player.getY();
         }
 
-        if (!isMain && stack.isEmpty()) {
-            offDisplayed = 0.0f;
+        if (stack.isEmpty()) {
+            if (!isMain) offDisplayed = 0.0f;
             return;
         }
 
         String name = stack.getItem().toString().toLowerCase();
         boolean isSpear = name.contains("spear");
         boolean isUsingThisHand = client.player.isUsingItem() && client.player.getActiveItem() == stack;
+
+        // FIX: Offhand should only render if the weapon is actively being used, or is a charged crossbow
+        if (!isMain) {
+            boolean isValidOffhand = isUsingThisHand || (stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack));
+            if (!isValidOffhand) {
+                offDisplayed = 0.0f;
+                return;
+            }
+        }
+
         float reach = getReach(client, stack, name);
         Entity target = getTarget(client, reach);
 
-        if (!(target instanceof LivingEntity livingTarget) || target instanceof ArmorStandEntity) {
+        // FIX: Ignore Creative/Spectator players
+        if (target instanceof PlayerEntity p && (p.isCreative() || p.isSpectator())) {
             if (isMain) mainDisplayed = 0.0f; else offDisplayed = 0.0f;
             return;
         }
 
-        if (livingTarget instanceof CreakingEntity) {
+        if (!(target instanceof LivingEntity livingTarget) || target instanceof ArmorStandEntity || target instanceof CreakingEntity) {
             if (isMain) mainDisplayed = 0.0f; else offDisplayed = 0.0f;
             return;
         }
 
-        // Standard Crit Logic (Vanilla conditions)
         boolean isCrit = client.player.fallDistance > 0.0F
                 && !client.player.isOnGround()
                 && !client.player.isClimbing()
                 && !client.player.isTouchingWater()
                 && !client.player.hasStatusEffect(StatusEffects.BLINDNESS)
+                && !client.player.hasStatusEffect(StatusEffects.SLOW_FALLING) // FIX: Slow falling disables crits
                 && !client.player.hasVehicle();
 
-        // Spear logic: Cannot crit
         if (isSpear) isCrit = false;
 
         float finalValue = 0;
@@ -86,7 +96,8 @@ public class PreDamageHud {
         boolean isHealing = false;
         float dragonMultiplier = 1.0f;
 
-        boolean isActuallyProjectile = (stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW) || (stack.isOf(Items.TRIDENT) && isUsingThisHand));
+        boolean isActuallyProjectile = stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW) || (stack.isOf(Items.TRIDENT) && isUsingThisHand) || stack.isOf(Items.SPLASH_POTION);
+        boolean isExplosion = stack.isOf(Items.CROSSBOW) && hasExplosiveFirework(stack);
 
         if (target instanceof EnderDragonPart part) {
             if (part.name != null && part.name.contains("head")) dragonMultiplier = 4.0f;
@@ -100,34 +111,68 @@ public class PreDamageHud {
                 var effects = contents.potion().isPresent() ? contents.potion().get().value().getEffects() : contents.getEffects();
                 for (StatusEffectInstance effect : effects) {
                     if (effect.getEffectType().equals(StatusEffects.INSTANT_HEALTH)) {
-                        finalValue = 4.0f * (float) Math.pow(2, effect.getAmplifier());
+                        // FIX: Health heals 4*lvl, hurts undead 6*lvl
+                        finalValue = isUndead ? 6.0f * (effect.getAmplifier() + 1) : 4.0f * (effect.getAmplifier() + 1);
                         isHealing = !isUndead;
                     } else if (effect.getEffectType().equals(StatusEffects.INSTANT_DAMAGE)) {
-                        finalValue = 6.0f * (float) Math.pow(2, effect.getAmplifier());
+                        // FIX: Damage hurts 6*lvl, heals undead 4*lvl
+                        finalValue = isUndead ? 4.0f * (effect.getAmplifier() + 1) : 6.0f * (effect.getAmplifier() + 1);
                         isHealing = isUndead;
                     }
                 }
                 if (livingTarget instanceof EnderDragonEntity) finalValue = 0;
             }
+        } else if (stack.isOf(Items.TRIDENT)) {
+            var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
+            int imp = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.IMPALING), stack);
+            float bonus = livingTarget.getType().isIn(EntityTypeTags.SENSITIVE_TO_IMPALING) ? imp * 2.5f : 0;
+
+            if (isUsingThisHand) {
+                finalValue = applyFinalReductions(client, livingTarget, stack, 8.0f + bonus, 0, true, false, false); // Thrown is 8.0
+            } else {
+                finalValue = applyFinalReductions(client, livingTarget, stack, 9.0f + bonus, 0, false, isCrit, false); // Melee is 9.0
+            }
         } else if (isSpear && isUsingThisHand) {
-            Vec3d playerVel = client.player.getVelocity();
-            if (client.player.getVehicle() != null) playerVel = client.player.getVehicle().getVelocity();
-            Vec3d relativeVel = playerVel.subtract(target.getVelocity());
-            double speedBps = relativeVel.length() * 20.0;
+            // FIX: Use horizontal velocity to prevent vertical jitter when stationary
+            Vec3d vel = client.player.getVelocity();
+            if (client.player.getVehicle() != null) vel = client.player.getVehicle().getVelocity();
+            double speedBps = Math.sqrt(vel.x * vel.x + vel.z * vel.z) * 20.0;
             float base = name.contains("netherite") ? 8.0f : 5.0f;
             float raw = (float) (base + (speedBps * 0.8f));
-            finalValue = applyFinalReductions(client, livingTarget, stack, raw, 0, false, false);
+            finalValue = applyFinalReductions(client, livingTarget, stack, raw, 0, false, false, false);
         } else if (stack.isOf(Items.MACE) && !client.player.isOnGround()) {
             float fallDist = (float) (maceFallStartY != -1.0 ? Math.max(0, maceFallStartY - client.player.getY()) : 0);
             if (client.player.hasStatusEffect(StatusEffects.SLOW_FALLING)) fallDist = 0;
-            finalValue = applyFinalReductions(client, livingTarget, stack, calculateMaceDamage(client, stack, fallDist), 0, false, isCrit);
+
+            float maceBase = 5.0f; // 1.21 Base
+            float strengthBonus = client.player.hasStatusEffect(StatusEffects.STRENGTH) ? 3.0F * (client.player.getStatusEffect(StatusEffects.STRENGTH).getAmplifier() + 1) : 0;
+            float weaknessPenalty = client.player.hasStatusEffect(StatusEffects.WEAKNESS) ? -4.0F : 0;
+            float phys = maceBase + strengthBonus + weaknessPenalty;
+
+            if (fallDist > 1.5F) {
+                phys += calculateMaceSmash(client, stack, fallDist);
+                finalValue = applyFinalReductions(client, livingTarget, stack, phys, 0, false, false, false);
+            } else {
+                finalValue = applyFinalReductions(client, livingTarget, stack, phys, 0, false, isCrit, false);
+            }
         } else {
             float phys = calculateRawPhysical(client, client.player, stack, name);
             float mag = calculateMagicBonus(client.player, stack, livingTarget);
-            finalValue = applyFinalReductions(client, livingTarget, stack, phys, mag, isActuallyProjectile, isCrit && !isActuallyProjectile);
+            finalValue = applyFinalReductions(client, livingTarget, stack, phys, mag, isActuallyProjectile, isCrit && !isActuallyProjectile, isExplosion);
         }
 
-        // Immunity Logic
+        // FIX: Cap healing/potions output based on missing/remaining health
+        float effectiveHealth = livingTarget.getHealth() + livingTarget.getAbsorptionAmount();
+        if (stack.isOf(Items.SPLASH_POTION)) {
+            if (isHealing) {
+                float missingHealth = livingTarget.getMaxHealth() - livingTarget.getHealth();
+                finalValue = Math.min(finalValue, missingHealth);
+            } else {
+                finalValue = Math.min(finalValue, effectiveHealth);
+            }
+        }
+
+        // Immunity Checks
         if (livingTarget instanceof WolfEntity wolf && !wolf.getBodyArmor().isEmpty()) {
             if (!stack.isOf(Items.SPLASH_POTION)) finalValue = 0;
         }
@@ -138,12 +183,11 @@ public class PreDamageHud {
         if (livingTarget instanceof EnderDragonEntity) {
             finalValue = (dragonMultiplier == 4.0f) ? finalValue : (finalValue * 0.25f) + 1.0f;
             int phaseId = livingTarget.getDataTracker().get(EnderDragonEntity.PHASE_TYPE);
-            if ((phaseId >= 4 && phaseId <= 7) && isActuallyProjectile) finalValue = 0;
+            if ((phaseId >= 4 && phaseId <= 7) && isActuallyProjectile) finalValue = 0; // FIX: Perching immunity
         }
 
         finalColor = getColor(livingTarget, finalValue, stack, isHealing);
 
-        // UI Indicators: ^ for crit, * for charged projectiles
         String suffix = "";
         if (isCrit && !isActuallyProjectile && !isSpear) {
             suffix = "^";
@@ -160,49 +204,69 @@ public class PreDamageHud {
         }
     }
 
-    private static float applyFinalReductions(MinecraftClient client, LivingEntity t, ItemStack s, float phys, float magic, boolean isProj, boolean isCrit) {
+    private static float applyFinalReductions(MinecraftClient client, LivingEntity t, ItemStack s, float phys, float magic, boolean isProj, boolean isCrit, boolean isExplosion) {
         float armor = (float) t.getAttributeValue(EntityAttributes.ARMOR);
         float toughness = (float) t.getAttributeValue(EntityAttributes.ARMOR_TOUGHNESS);
         var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
 
-        if (isCrit) {
-            phys *= 1.5F;
-        }
+        if (isCrit) phys *= 1.5F;
 
         float extra = 0;
         int sharp = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.SHARPNESS), s);
         if (sharp > 0) extra += 0.5F * sharp + 0.5F;
 
         if (t.getType().isIn(EntityTypeTags.SENSITIVE_TO_SMITE)) {
-            int smite = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.SMITE), s);
-            extra += smite * 2.5F;
+            extra += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.SMITE), s) * 2.5F;
         }
         if (t.getType().isIn(EntityTypeTags.SENSITIVE_TO_BANE_OF_ARTHROPODS)) {
-            int bane = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BANE_OF_ARTHROPODS), s);
-            extra += bane * 2.5F;
+            extra += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BANE_OF_ARTHROPODS), s) * 2.5F;
         }
         if (t.getType().isIn(EntityTypeTags.SENSITIVE_TO_IMPALING)) {
-            int imp = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.IMPALING), s);
-            extra += imp * 2.5F;
+            extra += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.IMPALING), s) * 2.5F;
         }
 
         float totalBase = phys + extra;
+
         int breach = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BREACH), s);
-        if (breach > 0) armor *= (1.0F - (breach * 0.15F));
+        if (breach > 0) {
+            float breachFactor = 1.0F - Math.min(1.0F, breach * 0.15F);
+            armor *= breachFactor;
+            toughness *= breachFactor;
+        }
 
         float afterArmor = DamageUtil.getDamageLeft(t, totalBase, t.getDamageSources().generic(), armor, toughness);
+
+        // FIX: Reverted to EquipmentSlot array for multi-version mapping stability
+        int epf = 0;
+        EquipmentSlot[] slots = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET};
+        for (EquipmentSlot slot : slots) {
+            ItemStack piece = t.getEquippedStack(slot);
+            if (!piece.isEmpty()) {
+                epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PROTECTION), piece);
+                if (isProj) epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PROJECTILE_PROTECTION), piece) * 2;
+                if (isExplosion) epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BLAST_PROTECTION), piece) * 2;
+            }
+        }
+        float reductionFactor = Math.min(20.0F, (float)epf);
+        afterArmor *= (1.0F - (reductionFactor * 0.04F));
+
         return afterArmor + magic;
     }
 
-    private static float calculateMaceDamage(MinecraftClient client, ItemStack s, float fallDist) {
-        float total = 6.0f;
-        if (fallDist > 1.5F) {
-            total += (fallDist * 3.0F);
-            var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
-            int density = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.DENSITY), s);
-            total += (density * 0.5f * fallDist);
+    private static float calculateMaceSmash(MinecraftClient client, ItemStack s, float fallDist) {
+        float smashBonus = 0.0f;
+        if (fallDist <= 3.0F) {
+            smashBonus = fallDist * 3.0F;
+        } else if (fallDist <= 8.0F) {
+            smashBonus = (3.0F * 3.0F) + ((fallDist - 3.0F) * 1.5F);
+        } else {
+            smashBonus = (3.0F * 3.0F) + (5.0F * 1.5F) + ((fallDist - 8.0F) * 0.5F);
         }
-        return total;
+
+        var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
+        int density = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.DENSITY), s);
+        smashBonus += (density * 0.5f * fallDist);
+        return smashBonus;
     }
 
     private static float calculateRawPhysical(MinecraftClient c, PlayerEntity p, ItemStack s, String n) {
@@ -219,12 +283,16 @@ public class PreDamageHud {
                 ItemStack proj = charged.getProjectiles().get(0);
                 if (proj.isOf(Items.FIREWORK_ROCKET)) {
                     FireworksComponent fw = proj.get(DataComponentTypes.FIREWORKS);
-                    return fw != null ? 5.0F + (fw.explosions().size() * 2.0F) : 0.0F;
+                    if (fw != null && !fw.explosions().isEmpty()) {
+                        return 5.0F + (fw.explosions().size() * 2.0F);
+                    }
+                    return 0.0F;
                 }
                 return applyPowerEnch(c, s, 9.0F);
             }
             return 0.0F;
         }
+
         double baseAttr = p.getAttributeBaseValue(EntityAttributes.ATTACK_DAMAGE);
         AttributeModifiersComponent mods = s.get(DataComponentTypes.ATTRIBUTE_MODIFIERS);
         if (mods != null) {
@@ -232,13 +300,29 @@ public class PreDamageHud {
                 if (entry.attribute().equals(EntityAttributes.ATTACK_DAMAGE)) baseAttr += entry.modifier().value();
             }
         }
-        return (float) baseAttr;
+
+        float strengthBonus = p.hasStatusEffect(StatusEffects.STRENGTH) ? 3.0F * (p.getStatusEffect(StatusEffects.STRENGTH).getAmplifier() + 1) : 0;
+        float weaknessPenalty = p.hasStatusEffect(StatusEffects.WEAKNESS) ? -4.0F : 0;
+
+        return (float) baseAttr + strengthBonus + weaknessPenalty;
     }
 
     private static float applyPowerEnch(MinecraftClient c, ItemStack s, float base) {
         var reg = c.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
         int lvl = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.POWER), s);
         return lvl > 0 ? base * (1.25F + (0.25F * lvl)) : base;
+    }
+
+    private static boolean hasExplosiveFirework(ItemStack stack) {
+        ChargedProjectilesComponent charged = stack.get(DataComponentTypes.CHARGED_PROJECTILES);
+        if (charged != null && !charged.isEmpty()) {
+            ItemStack proj = charged.getProjectiles().get(0);
+            if (proj.isOf(Items.FIREWORK_ROCKET)) {
+                FireworksComponent fw = proj.get(DataComponentTypes.FIREWORKS);
+                return fw != null && !fw.explosions().isEmpty();
+            }
+        }
+        return false;
     }
 
     private static float calculateMagicBonus(PlayerEntity p, ItemStack s, LivingEntity t) {
@@ -271,10 +355,10 @@ public class PreDamageHud {
 
     private static float getReach(MinecraftClient c, ItemStack s, String n) {
         if (c.player == null) return 3.5F;
-        // FIXED: Changed 'stack' to 's' to match the method parameter name
         boolean using = c.player.isUsingItem() && c.player.getActiveItem() == s;
         if (s.isOf(Items.MACE) && c.player.fallDistance > 0.0f) return 100.0F;
         if (n.contains("spear") && using) return 100.0F;
+        if (s.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(s)) return 30.0F;
         if ((s.isOf(Items.BOW) || s.isOf(Items.TRIDENT)) && using) return 30.0F;
         return n.contains("spear") ? 4.5F : 3.5F;
     }
@@ -292,11 +376,12 @@ public class PreDamageHud {
     }
 
     private static int getColor(LivingEntity target, float damage, ItemStack stack, boolean isHealing) {
+        float effectiveHealth = target.getHealth() + target.getAbsorptionAmount();
         if (stack.isOf(Items.SPLASH_POTION)) {
-            if (!isHealing && isEnemyHoldingTotem(target) && damage >= target.getHealth()) return 0xFFF2FF00;
+            if (!isHealing && isEnemyHoldingTotem(target) && damage >= effectiveHealth) return 0xFFF2FF00;
             return isHealing ? 0xFF00FF00 : 0xFF990000;
         }
-        if (damage >= target.getHealth()) {
+        if (damage >= effectiveHealth) {
             return isEnemyHoldingTotem(target) ? 0xFFF2FF00 : 0xFFFF0000;
         }
         return 0xFFFFFFFF;
