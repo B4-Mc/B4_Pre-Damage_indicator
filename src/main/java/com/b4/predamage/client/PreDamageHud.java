@@ -40,13 +40,15 @@ public class PreDamageHud {
     private static float mainTarget = 0.0f;
     private static double maceFallStartY = -1.0;
 
+    private static boolean wasCritMain = false;
+    private static boolean wasCritOff = false;
+
     private static Field lastDamageField = null;
     private static boolean fieldSearched = false;
 
     public static void processHand(MinecraftClient client, DrawContext ctx, ItemStack stack, boolean isMain) {
         if (client.player == null || client.world == null) return;
 
-        // TRACKING MACE FALL START
         if (client.player.isOnGround() || client.player.isClimbing() || client.player.isTouchingWater()) {
             maceFallStartY = -1.0;
         } else if (maceFallStartY == -1.0 && client.player.getVelocity().y < -0.1) {
@@ -63,7 +65,6 @@ public class PreDamageHud {
         boolean isUsingThisHand = client.player.isUsingItem() && client.player.getActiveItem() == stack;
         boolean isChargedCrossbow = stack.isOf(Items.CROSSBOW) && stack.contains(DataComponentTypes.CHARGED_PROJECTILES) && !stack.get(DataComponentTypes.CHARGED_PROJECTILES).isEmpty();
 
-        // OFF-HAND Weapon Visibility Logic
         if (!isMain) {
             boolean isThrownPotion = stack.isOf(Items.SPLASH_POTION) || stack.isOf(Items.LINGERING_POTION);
             boolean isValidOffhandWeapon = stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW) ||
@@ -81,7 +82,6 @@ public class PreDamageHud {
             }
         }
 
-        // REACH & TARGET DETECTION
         float reach = getReach(client, stack, name);
         Entity rawHit = getTarget(client, reach);
 
@@ -113,144 +113,141 @@ public class PreDamageHud {
         boolean isSplash = stack.isOf(Items.SPLASH_POTION);
         boolean isLingering = stack.isOf(Items.LINGERING_POTION);
         boolean isExplosion = stack.isOf(Items.CROSSBOW) && hasExplosiveFirework(stack);
-        // Firework explosions are strictly explosions, not standard projectiles
         boolean isActuallyProjectile = (stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW) || (stack.isOf(Items.TRIDENT) && isUsingThisHand)) && !isExplosion;
 
-        // POTION / TRIDENT / SPEAR / MELEE CALCULATION
-        if (isSplash || isLingering) {
-            var contents = stack.get(DataComponentTypes.POTION_CONTENTS);
-            if (contents != null) {
-                boolean isUndead = livingTarget.getType().isIn(EntityTypeTags.SENSITIVE_TO_SMITE);
-                boolean isImmuneToPoison = isUndead || livingTarget instanceof EnderDragonEntity || livingTarget instanceof WitherEntity || livingTarget.getType().equals(EntityType.BOGGED);
-                var effects = contents.potion().isPresent() ? contents.potion().get().value().getEffects() : contents.getEffects();
+        if (isBlockedByShield(client.player, livingTarget)) {
+            var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
+            boolean pierces = stack.isOf(Items.CROSSBOW) && EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PIERCING), stack) > 0;
 
-                for (StatusEffectInstance effect : effects) {
-                    boolean isHeal = effect.getEffectType().equals(StatusEffects.INSTANT_HEALTH);
-                    boolean isHarming = effect.getEffectType().equals(StatusEffects.INSTANT_DAMAGE);
-                    boolean isPoison = effect.getEffectType().equals(StatusEffects.POISON);
-                    boolean isRegen = effect.getEffectType().equals(StatusEffects.REGENERATION);
+            if (!pierces && !isSplash && !isLingering) {
+                overrideText = "0.0";
+                finalColor = 0xFF0000AA;
+                finalValue = 0;
+                isActuallyProjectile = false;
+            }
+        }
 
-                    String heartStr = effect.getAmplifier() > 0 ? "❤❤" : "❤";
+        if (overrideText == null) {
+            if (isSplash || isLingering) {
+                var contents = stack.get(DataComponentTypes.POTION_CONTENTS);
+                if (contents != null) {
+                    boolean isUndead = livingTarget.getType().isIn(EntityTypeTags.SENSITIVE_TO_SMITE);
+                    boolean isImmuneToPoison = isUndead || livingTarget instanceof EnderDragonEntity || livingTarget instanceof WitherEntity || livingTarget.getType().equals(EntityType.BOGGED);
+                    var effects = contents.potion().isPresent() ? contents.potion().get().value().getEffects() : contents.getEffects();
 
-                    // Enderman Harming immunity
-                    if (livingTarget instanceof EndermanEntity && isHarming) {
-                        overrideText = null; finalValue = 0; continue;
+                    int epf = 0;
+                    var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
+                    for (EquipmentSlot slot : new EquipmentSlot[]{EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
+                        ItemStack piece = livingTarget.getEquippedStack(slot);
+                        if (!piece.isEmpty()) epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PROTECTION), piece);
                     }
+                    float magicReduction = 1.0F - (Math.min(20.0F, (float)epf) * 0.04F);
 
-                    if (isPoison) {
-                        if (!isImmuneToPoison) {
-                            overrideText = "-" + heartStr; finalColor = 0xFF4E9331;
-                        } else {
-                            // Poison shows absolutely nothing against immune mobs (Dragon/Wither/Undead)
+                    for (StatusEffectInstance effect : effects) {
+                        boolean isHeal = effect.getEffectType().equals(StatusEffects.INSTANT_HEALTH);
+                        boolean isHarming = effect.getEffectType().equals(StatusEffects.INSTANT_DAMAGE);
+                        boolean isPoison = effect.getEffectType().equals(StatusEffects.POISON);
+                        boolean isRegen = effect.getEffectType().equals(StatusEffects.REGENERATION);
+                        String heartStr = effect.getAmplifier() > 0 ? "💕" : "❤"; // FIXED: Uses stable heart character
+
+                        if (livingTarget instanceof EndermanEntity && isHarming) {
                             overrideText = null; finalValue = 0; continue;
                         }
-                    } else if (isRegen) {
-                        // Regen ignores Dragon and Undead
-                        if (!isUndead && !(livingTarget instanceof EnderDragonEntity)) {
-                            overrideText = "+" + heartStr; finalColor = 0xFF00FF00;
+
+                        if (isPoison) {
+                            if (!isImmuneToPoison) { overrideText = "-" + heartStr; finalColor = 0xFF4E9331; }
+                        } else if (isRegen) {
+                            if (!isUndead && !(livingTarget instanceof EnderDragonEntity)) { overrideText = "+" + heartStr; finalColor = 0xFF00FF00; }
+                        } else if (isLingering) {
+                            if (isHeal) { overrideText = isUndead ? "-" + heartStr : "+" + heartStr; finalColor = isUndead ? 0xFF990000 : 0xFF00FF00; }
+                            else if (isHarming) { overrideText = isUndead ? "+" + heartStr : "-" + heartStr; finalColor = isUndead ? 0xFF00FF00 : 0xFF990000; }
+                        } else if (isSplash) {
+                            // FIXED: Protection reduction is applied only to damage (Issue 1), never to healing
+                            if (isHeal) {
+                                float val = (isUndead ? 6.0f : 4.0f) * (effect.getAmplifier() + 1);
+                                isHealing = !isUndead;
+                                finalValue = isHealing ? val : val * magicReduction;
+                            } else if (isHarming) {
+                                float val = (isUndead ? 4.0f : 6.0f) * (effect.getAmplifier() + 1);
+                                isHealing = isUndead;
+                                finalValue = isHealing ? val : val * magicReduction;
+                            }
                         }
-                    } else if (isLingering) {
-                        if (isHeal) { overrideText = isUndead ? "-" + heartStr : "+" + heartStr; finalColor = isUndead ? 0xFF990000 : 0xFF00FF00; }
-                        else if (isHarming) { overrideText = isUndead ? "+" + heartStr : "-" + heartStr; finalColor = isUndead ? 0xFF00FF00 : 0xFF990000; }
-                    } else if (isSplash) {
-                        if (isHeal) { finalValue = isUndead ? 6.0f * (effect.getAmplifier() + 1) : 4.0f * (effect.getAmplifier() + 1); isHealing = !isUndead; }
-                        else if (isHarming) { finalValue = isUndead ? 4.0f * (effect.getAmplifier() + 1) : 6.0f * (effect.getAmplifier() + 1); isHealing = isUndead; }
                     }
                 }
+            } else if (stack.isOf(Items.TRIDENT)) {
+                float phys = calculateRawPhysical(client, livingTarget, stack, name, isCrit);
+                phys = isUsingThisHand ? 8.0f : phys;
+                finalValue = applyFinalReductions(client, livingTarget, stack, phys, 0, isUsingThisHand, isExplosion, false);
+            } else if (isSpear && isUsingThisHand) {
+                Vec3d vel = client.player.getVelocity();
+                if (client.player.getVehicle() != null) vel = client.player.getVehicle().getVelocity();
+                Vec3d relativeVel = vel.subtract(livingTarget.getVelocity());
+                double speedBps = relativeVel.length() * 20.0;
+                float phys = (float) ((name.contains("netherite") ? 8.0f : 5.0f) + (speedBps * 0.8f));
+                finalValue = applyFinalReductions(client, livingTarget, stack, phys, 0, false, false, false);
+            } else {
+                float phys = calculateRawPhysical(client, livingTarget, stack, name, isCrit);
+                float magic = calculateMagicCap(client.player, livingTarget, stack, isUsingThisHand || isChargedCrossbow);
+                boolean isUndead = livingTarget.getType().isIn(EntityTypeTags.SENSITIVE_TO_SMITE);
+
+                // Determine if the magic portion is actually healing the target
+                isHealing = (stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW)) && isMagicHealing(stack, client.player, isUndead);
+                finalValue = applyFinalReductions(client, livingTarget, stack, phys, magic, isActuallyProjectile, isExplosion, isHealing);
             }
-        } else if (stack.isOf(Items.TRIDENT)) {
-            float phys = calculateRawPhysical(client, livingTarget, stack, name, isCrit);
-            phys = isUsingThisHand ? 8.0f : phys;
-            finalValue = applyFinalReductions(client, livingTarget, stack, phys, 0, isUsingThisHand, isExplosion);
-        } else if (isSpear && isUsingThisHand) {
-            Vec3d vel = client.player.getVelocity();
-            if (client.player.getVehicle() != null) vel = client.player.getVehicle().getVelocity();
-            Vec3d relativeVel = vel.subtract(livingTarget.getVelocity());
-            double speedBps = relativeVel.length() * 20.0;
-            float base = name.contains("netherite") ? 8.0f : 5.0f;
-            float phys = (float) (base + (speedBps * 0.8f));
-            finalValue = applyFinalReductions(client, livingTarget, stack, phys, 0, false, false);
-        } else {
-            float phys = calculateRawPhysical(client, livingTarget, stack, name, isCrit);
-            float magicCap = calculateMagicCap(client.player, stack);
-            finalValue = applyFinalReductions(client, livingTarget, stack, phys, magicCap, isActuallyProjectile, isExplosion);
         }
 
-        // Dragon Perching & Body Logic
+        // Dragon head logic
         if (livingTarget instanceof EnderDragonEntity dragon) {
-            // FIX: Ensure finalValue > 0 so that immune Potions/Regen don't accidentally get buffed to 1.0 by the body math
             if (!isHealing && overrideText == null && finalValue > 0) {
-                if (!isDragonHead) {
-                    finalValue = (finalValue / 4.0f) + 1.0f;
-                }
+                if (!isDragonHead) finalValue = (finalValue / 4.0f) + 1.0f;
             }
             int phaseId = dragon.getDataTracker().get(EnderDragonEntity.PHASE_TYPE);
-            // FIX: Projectiles don't work against perching dragons, but explosions do!
-            if (phaseId >= 4 && phaseId <= 8 && isActuallyProjectile) {
-                finalValue = 0; overrideText = null;
-            }
+            if (phaseId >= 4 && phaseId <= 8 && isActuallyProjectile && overrideText == null) finalValue = 0;
         }
 
-        // I-FRAME FIX: Exact "nd - od" implementation
         if (livingTarget.timeUntilRegen > 10 && !isHealing && overrideText == null) {
             float od = getLastDamageTaken(livingTarget);
-            if (finalValue <= od) {
-                finalValue = 0.0f;
-            } else {
-                finalValue = finalValue - od;
-            }
+            finalValue = Math.max(0, finalValue - od);
         }
 
-        float effectiveHealth = livingTarget.getHealth() + livingTarget.getAbsorptionAmount();
         if (isSplash && overrideText == null) {
+            float effectiveHealth = livingTarget.getHealth() + livingTarget.getAbsorptionAmount();
             finalValue = isHealing ? Math.min(finalValue, livingTarget.getMaxHealth() - livingTarget.getHealth()) : Math.min(finalValue, effectiveHealth);
         }
 
-        // IMMUNITIES
         if (livingTarget instanceof WolfEntity wolf && !wolf.getBodyArmor().isEmpty() && !isSplash && !isLingering) finalValue = 0;
-        if (livingTarget instanceof EndermanEntity && isActuallyProjectile) { finalValue = 0; overrideText = null; }
-        if (livingTarget instanceof WitherEntity wither && wither.getHealth() <= wither.getMaxHealth() / 2.0f && isActuallyProjectile) { finalValue = 0; overrideText = null; }
+        if (livingTarget instanceof EndermanEntity && isActuallyProjectile && overrideText == null) finalValue = 0;
+        if (livingTarget instanceof WitherEntity wither && wither.getHealth() <= wither.getMaxHealth() / 2.0f && isActuallyProjectile && overrideText == null) finalValue = 0;
 
         if (overrideText == null) finalColor = getColor(livingTarget, finalValue, stack, isHealing);
 
         String suffix = "";
-        if (isCrit && !isActuallyProjectile && !isSpear) suffix = "^";
-        else if (isUsingThisHand && (stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW) || stack.isOf(Items.TRIDENT) || isSpear)) suffix = "*";
-        else if (isChargedCrossbow) suffix = "*";
+        // FIXED: Exclude projectiles and explosions from showing the melee crit "^" suffix
+        if (isCrit && !isActuallyProjectile && !isExplosion && !isSpear && !isSplash && !isLingering) suffix = "^";
+        else if ((isUsingThisHand && (stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW) || isSpear)) || isChargedCrossbow) suffix = "*";
 
-        // BYPASS SMOOTHING FOR POTIONS AND CRITS
-        boolean noSmoothing = isSplash || isLingering || isCrit;
+        boolean noSmoothing = isSplash || isLingering || isCrit || (isMain ? wasCritMain : wasCritOff);
+        if (isMain) wasCritMain = isCrit; else wasCritOff = isCrit;
 
         if (isMain) {
             mainTarget = finalValue;
-            if (noSmoothing) {
-                mainDisplayed = mainTarget;
-            } else {
-                if (Math.abs(mainDisplayed - mainTarget) < 0.05F) mainDisplayed = mainTarget;
-                else mainDisplayed = MathHelper.lerp(0.15F, mainDisplayed, mainTarget);
-            }
+            if (noSmoothing || overrideText != null) mainDisplayed = mainTarget;
+            else mainDisplayed = (Math.abs(mainDisplayed - mainTarget) < 0.05F) ? mainTarget : MathHelper.lerp(0.15F, mainDisplayed, mainTarget);
 
             if (mainDisplayed >= 0.1F || overrideText != null) {
                 if (overrideText != null) renderString(ctx, client, overrideText, finalColor, true);
                 else renderIndicator(ctx, client, mainDisplayed, finalColor, true, suffix, isHealing);
-            } else {
-                mainDisplayed = 0.0f;
-            }
+            } else mainDisplayed = 0;
         } else {
             if (finalValue > 0 || overrideText != null || offDisplayed >= 0.1F) {
-                if (noSmoothing) {
-                    offDisplayed = finalValue;
-                } else {
-                    if (Math.abs(offDisplayed - finalValue) < 0.05F) offDisplayed = finalValue;
-                    else offDisplayed = MathHelper.lerp(0.20F, offDisplayed, finalValue);
-                }
+                if (noSmoothing || overrideText != null) offDisplayed = finalValue;
+                else offDisplayed = (Math.abs(offDisplayed - finalValue) < 0.05F) ? finalValue : MathHelper.lerp(0.20F, offDisplayed, finalValue);
 
                 if (offDisplayed >= 0.1F || overrideText != null) {
                     if (overrideText != null) renderString(ctx, client, overrideText, finalColor, false);
                     else renderIndicator(ctx, client, offDisplayed, finalColor, false, suffix, isHealing);
-                } else {
-                    offDisplayed = 0.0f;
-                }
+                } else offDisplayed = 0;
             }
         }
     }
@@ -258,7 +255,7 @@ public class PreDamageHud {
     private static float calculateRawPhysical(MinecraftClient c, LivingEntity target, ItemStack s, String n, boolean isCrit) {
         PlayerEntity p = c.player;
         if (s.isOf(Items.BOW)) {
-            if (!p.isUsingItem() || p.getActiveItem() != s) return 0.0F;
+            if (!(p.isUsingItem() && p.getActiveItem() == s)) return 0.0F;
             int ticks = s.getMaxUseTime(p) - p.getItemUseTimeLeft();
             float pull = Math.min((float) ticks / 20.0F, 1.0F);
             pull = (pull * pull + pull * 2.0F) / 3.0F;
@@ -270,11 +267,7 @@ public class PreDamageHud {
                 ItemStack proj = charged.getProjectiles().get(0);
                 if (proj.isOf(Items.FIREWORK_ROCKET)) {
                     FireworksComponent fw = proj.get(DataComponentTypes.FIREWORKS);
-                    // Max possible explosion damage, ignoring distance
-                    if (fw != null && !fw.explosions().isEmpty()) {
-                        return 5.0F + (fw.explosions().size() * 2.0F);
-                    }
-                    return 0.0F;
+                    return (fw != null && !fw.explosions().isEmpty()) ? 5.0F + (fw.explosions().size() * 2.0F) : 0.0F;
                 }
                 return applyPowerEnch(c, s, 9.0F);
             }
@@ -288,15 +281,13 @@ public class PreDamageHud {
                 if (entry.attribute().equals(EntityAttributes.ATTACK_DAMAGE)) baseAttr += entry.modifier().value();
             }
         }
-
         float strength = p.hasStatusEffect(StatusEffects.STRENGTH) ? 3.0F * (p.getStatusEffect(StatusEffects.STRENGTH).getAmplifier() + 1) : 0;
         float weakness = p.hasStatusEffect(StatusEffects.WEAKNESS) ? -4.0F : 0;
         float total = (float) baseAttr + strength + weakness;
 
         if (s.isOf(Items.MACE)) {
             float fallDist = (float) (maceFallStartY != -1.0 ? Math.max(0, maceFallStartY - p.getY()) : 0);
-            if (p.hasStatusEffect(StatusEffects.SLOW_FALLING)) fallDist = 0;
-            if (fallDist > 1.5F) {
+            if (fallDist > 1.5F && !p.hasStatusEffect(StatusEffects.SLOW_FALLING)) {
                 float smashBonus = (fallDist <= 3.0F) ? fallDist * 4.0F : (fallDist <= 8.0F ? 12.0F + ((fallDist - 3.0F) * 2.0F) : 22.0F + ((fallDist - 8.0F) * 1.0F));
                 var reg = c.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
                 smashBonus += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.DENSITY), s) * 0.5F * fallDist;
@@ -304,102 +295,89 @@ public class PreDamageHud {
                 isCrit = true;
             }
         }
-
-        if (isCrit) total *= 1.5F;
-        return total;
+        return isCrit ? total * 1.5F : total;
     }
 
-    private static float applyFinalReductions(MinecraftClient client, LivingEntity t, ItemStack s, float phys, float magicCap, boolean isProj, boolean isExplosion) {
-        float armor = (float) t.getAttributeValue(EntityAttributes.ARMOR);
-        float toughness = (float) t.getAttributeValue(EntityAttributes.ARMOR_TOUGHNESS);
+    private static float applyFinalReductions(MinecraftClient client, LivingEntity t, ItemStack s, float phys, float magic, boolean isProj, boolean isExplo, boolean isHealing) {
         var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
         float extra = 0;
         int sharp = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.SHARPNESS), s);
         if (sharp > 0) extra += 0.5F * sharp + 0.5F;
         if (t.getType().isIn(EntityTypeTags.SENSITIVE_TO_SMITE)) extra += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.SMITE), s) * 2.5F;
-        if (t.getType().isIn(EntityTypeTags.SENSITIVE_TO_BANE_OF_ARTHROPODS)) extra += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BANE_OF_ARTHROPODS), s) * 2.5F;
-        if (t.getType().isIn(EntityTypeTags.SENSITIVE_TO_IMPALING)) extra += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.IMPALING), s) * 2.5F;
 
-        float baseDamage = phys + extra;
+        float armor = (float) t.getAttributeValue(EntityAttributes.ARMOR);
+        float toughness = (float) t.getAttributeValue(EntityAttributes.ARMOR_TOUGHNESS);
         int breach = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BREACH), s);
-        if (breach > 0) {
-            float breachFactor = Math.max(0.0F, 1.0F - (breach * 0.15F));
-            armor *= breachFactor;
-            toughness *= breachFactor;
-        }
+        if (breach > 0) { armor *= (1.0F - breach * 0.15F); toughness *= (1.0F - breach * 0.15F); }
 
-        float afterArmor = DamageUtil.getDamageLeft(t, baseDamage, t.getDamageSources().generic(), armor, toughness);
-        float totalDamage = afterArmor + (magicCap > 0 ? Math.max(0, magicCap - afterArmor) : 0);
+        float afterArmor = DamageUtil.getDamageLeft(t, phys + extra, t.getDamageSources().generic(), armor, toughness);
 
         int epf = 0;
         for (EquipmentSlot slot : new EquipmentSlot[]{EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
-            ItemStack piece = t.getEquippedStack(slot);
-            if (!piece.isEmpty()) {
-                epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PROTECTION), piece);
-                if (isProj) epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PROJECTILE_PROTECTION), piece) * 2;
-                if (isExplosion) epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BLAST_PROTECTION), piece) * 2;
+            ItemStack p = t.getEquippedStack(slot);
+            if (!p.isEmpty()) {
+                epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PROTECTION), p);
+                if (isProj) epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PROJECTILE_PROTECTION), p) * 2;
+                if (isExplo) epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BLAST_PROTECTION), p) * 2;
             }
         }
-        return totalDamage * (1.0F - (Math.min(20.0F, (float)epf) * 0.04F));
+        float protRed = (1.0F - (Math.min(20.0F, (float)epf) * 0.04F));
+
+        // FIXED: Damage gets reduced by protection (Issue 1), but Healing II never does.
+        return isHealing ? (afterArmor * protRed) + magic : (afterArmor + magic) * protRed;
     }
 
     private static float getReach(MinecraftClient c, ItemStack s, String n) {
         if (c.player == null) return 3.5F;
-        float baseReach = (float) c.player.getAttributeValue(EntityAttributes.ENTITY_INTERACTION_RANGE);
-        boolean using = c.player.isUsingItem() && c.player.getActiveItem() == s;
-
-        if (s.isOf(Items.MACE) && c.player.fallDistance > 0.0f) return 100.0F;
-        if (n.contains("spear") && using) return 100.0F;
-
-        // Dynamic Bow/Crossbow Reach
-        if (s.isOf(Items.CROSSBOW)) {
-            boolean isCharged = s.contains(DataComponentTypes.CHARGED_PROJECTILES) && !s.get(DataComponentTypes.CHARGED_PROJECTILES).isEmpty();
-            return isCharged ? 45.0F : baseReach;
-        }
-        if (s.isOf(Items.BOW)) {
-            return using ? 45.0F : baseReach;
-        }
-        if (s.isOf(Items.TRIDENT)) {
-            return using ? 45.0F : baseReach;
-        }
-
-        return n.contains("spear") ? baseReach + 1.5F : baseReach;
+        float base = (float) c.player.getAttributeValue(EntityAttributes.ENTITY_INTERACTION_RANGE);
+        if (s.isOf(Items.MACE) && c.player.fallDistance > 0) return 100F;
+        if (s.isOf(Items.BOW) || s.isOf(Items.TRIDENT) || s.isOf(Items.CROSSBOW)) return (c.player.isUsingItem() && c.player.getActiveItem() == s) ? 45F : base;
+        return n.contains("spear") ? base + 1.5F : base;
     }
 
     private static Entity getTarget(MinecraftClient client, double maxDist) {
-        Entity camera = client.getCameraEntity();
-        if (camera == null || client.world == null) return null;
-
-        if (maxDist <= 10.0 && client.crosshairTarget instanceof EntityHitResult ehr) {
-            Entity hit = ehr.getEntity();
-            if (hit instanceof EnderDragonPart part) return part.owner;
-            return hit;
-        }
-
-        HitResult blockHit = camera.raycast(maxDist, 0, false);
-        double blockDist = blockHit.getType() != HitResult.Type.MISS ? blockHit.getPos().distanceTo(camera.getEyePos()) : maxDist;
-
-        Vec3d start = camera.getEyePos();
-        Vec3d rot = camera.getRotationVec(1.0F);
-        Vec3d end = start.add(rot.multiply(maxDist));
-
-        // FIX: The final parameter MUST be the squared distance (maxDist * maxDist) for proper extended reach.
-        EntityHitResult entityHit = ProjectileUtil.raycast(camera, start, end, camera.getBoundingBox().stretch(rot.multiply(maxDist)).expand(1.0D), (ent) -> !ent.isSpectator() && ent.canHit(), maxDist * maxDist);
-
-        if (entityHit != null && entityHit.getPos().distanceTo(start) < blockDist) {
-            Entity result = entityHit.getEntity();
-            if (result instanceof EnderDragonEntity dragon) {
-                for (EnderDragonPart part : dragon.getBodyParts()) {
-                    if (part.getBoundingBox().raycast(start, end).isPresent()) return part;
-                }
-            }
-            return result;
-        }
-        return null;
+        Entity cam = client.getCameraEntity();
+        if (cam == null || client.world == null) return null;
+        if (maxDist <= 10.0 && client.crosshairTarget instanceof EntityHitResult ehr) return ehr.getEntity() instanceof EnderDragonPart p ? p.owner : ehr.getEntity();
+        Vec3d start = cam.getEyePos(), rot = cam.getRotationVec(1.0F), end = start.add(rot.multiply(maxDist));
+        EntityHitResult eHit = ProjectileUtil.raycast(cam, start, end, cam.getBoundingBox().stretch(rot.multiply(maxDist)).expand(1.0D), e -> !e.isSpectator() && e.canHit(), maxDist * maxDist);
+        return eHit != null ? eHit.getEntity() : null;
     }
 
-    private static void handleMainSmoothing(float actual) {
-        mainTarget = actual;
+    private static boolean isBlockedByShield(Entity attacker, LivingEntity target) {
+        if (!target.isBlocking()) return false;
+        Vec3d diff = new Vec3d(attacker.getX() - target.getX(), 0, attacker.getZ() - target.getZ()).normalize();
+        Vec3d look = target.getRotationVec(1.0F);
+        return diff.dotProduct(new Vec3d(look.x, 0, look.z).normalize()) > 0.0;
+    }
+
+    private static boolean isMagicHealing(ItemStack bow, PlayerEntity p, boolean targetIsUndead) {
+        ItemStack proj = bow.isOf(Items.BOW) ? getActiveArrow(p) : (bow.get(DataComponentTypes.CHARGED_PROJECTILES) != null && !bow.get(DataComponentTypes.CHARGED_PROJECTILES).isEmpty() ? bow.get(DataComponentTypes.CHARGED_PROJECTILES).getProjectiles().get(0) : ItemStack.EMPTY);
+        if (proj.isEmpty() || !proj.contains(DataComponentTypes.POTION_CONTENTS)) return false;
+        for (StatusEffectInstance e : proj.get(DataComponentTypes.POTION_CONTENTS).getEffects()) {
+            if (e.getEffectType().equals(StatusEffects.INSTANT_HEALTH) && !targetIsUndead) return true;
+            if (e.getEffectType().equals(StatusEffects.INSTANT_DAMAGE) && targetIsUndead) return true;
+        }
+        return false;
+    }
+
+    private static float calculateMagicCap(PlayerEntity p, LivingEntity target, ItemStack bow, boolean active) {
+        if (!active) return 0;
+        ItemStack proj = bow.isOf(Items.BOW) ? getActiveArrow(p) : (bow.get(DataComponentTypes.CHARGED_PROJECTILES) != null && !bow.get(DataComponentTypes.CHARGED_PROJECTILES).isEmpty() ? bow.get(DataComponentTypes.CHARGED_PROJECTILES).getProjectiles().get(0) : ItemStack.EMPTY);
+        if (proj.isEmpty() || !proj.contains(DataComponentTypes.POTION_CONTENTS)) return 0;
+        boolean undead = target.getType().isIn(EntityTypeTags.SENSITIVE_TO_SMITE);
+        for (StatusEffectInstance e : proj.get(DataComponentTypes.POTION_CONTENTS).getEffects()) {
+            if ((e.getEffectType().equals(StatusEffects.INSTANT_DAMAGE) && !undead) || (e.getEffectType().equals(StatusEffects.INSTANT_HEALTH) && undead)) return 6.0F * (e.getAmplifier() + 1);
+            if ((e.getEffectType().equals(StatusEffects.INSTANT_HEALTH) && !undead) || (e.getEffectType().equals(StatusEffects.INSTANT_DAMAGE) && undead)) return 6.0F * (e.getAmplifier() + 1);
+        }
+        return 0;
+    }
+
+    private static ItemStack getActiveArrow(PlayerEntity p) {
+        if (p.getOffHandStack().getItem() instanceof ArrowItem) return p.getOffHandStack();
+        if (p.getMainHandStack().getItem() instanceof ArrowItem) return p.getMainHandStack();
+        for (int i = 0; i < p.getInventory().size(); i++) if (p.getInventory().getStack(i).getItem() instanceof ArrowItem) return p.getInventory().getStack(i);
+        return ItemStack.EMPTY;
     }
 
     private static float applyPowerEnch(MinecraftClient c, ItemStack s, float base) {
@@ -409,76 +387,35 @@ public class PreDamageHud {
     }
 
     private static boolean hasExplosiveFirework(ItemStack stack) {
-        ChargedProjectilesComponent charged = stack.get(DataComponentTypes.CHARGED_PROJECTILES);
-        if (charged != null && !charged.isEmpty()) {
-            ItemStack proj = charged.getProjectiles().get(0);
-            if (proj.isOf(Items.FIREWORK_ROCKET)) {
-                FireworksComponent fw = proj.get(DataComponentTypes.FIREWORKS);
-                return fw != null && !fw.explosions().isEmpty();
-            }
-        }
-        return false;
+        ChargedProjectilesComponent c = stack.get(DataComponentTypes.CHARGED_PROJECTILES);
+        return c != null && !c.isEmpty() && c.getProjectiles().get(0).isOf(Items.FIREWORK_ROCKET) && c.getProjectiles().get(0).contains(DataComponentTypes.FIREWORKS) && !c.getProjectiles().get(0).get(DataComponentTypes.FIREWORKS).explosions().isEmpty();
     }
 
-    private static float calculateMagicCap(PlayerEntity p, ItemStack s) {
-        ItemStack proj = ItemStack.EMPTY;
-        if (s.isOf(Items.BOW)) {
-            for (int i = 0; i < p.getInventory().size(); i++) { if (p.getInventory().getStack(i).getItem() instanceof ArrowItem) { proj = p.getInventory().getStack(i); break; } }
-        } else if (s.isOf(Items.CROSSBOW)) {
-            ChargedProjectilesComponent c = s.get(DataComponentTypes.CHARGED_PROJECTILES);
-            if (c != null && !c.isEmpty()) proj = c.getProjectiles().get(0);
-        }
-        if (proj.isEmpty() || !proj.contains(DataComponentTypes.POTION_CONTENTS)) return 0;
-        PotionContentsComponent contents = proj.get(DataComponentTypes.POTION_CONTENTS);
-        for (StatusEffectInstance effect : contents.getEffects()) {
-            if (effect.getEffectType().equals(StatusEffects.INSTANT_DAMAGE) || effect.getEffectType().equals(StatusEffects.INSTANT_HEALTH)) return 4.0F * (effect.getAmplifier() + 1);
-        }
-        return 0;
+    private static int getColor(LivingEntity t, float dmg, ItemStack s, boolean heal) {
+        float health = t.getHealth() + t.getAbsorptionAmount();
+        if (s.isOf(Items.SPLASH_POTION)) return heal ? 0xFF00FF00 : 0xFF990000;
+        return (dmg >= health) ? (isEnemyHoldingTotem(t) ? 0xFFF2FF00 : 0xFFFF0000) : 0xFFFFFFFF;
     }
 
-    private static int getColor(LivingEntity target, float damage, ItemStack stack, boolean isHealing) {
-        float effectiveHealth = target.getHealth() + target.getAbsorptionAmount();
-        if (stack.isOf(Items.SPLASH_POTION)) {
-            if (!isHealing && isEnemyHoldingTotem(target) && damage >= effectiveHealth) return 0xFFF2FF00;
-            return isHealing ? 0xFF00FF00 : 0xFF990000;
-        }
-        if (damage >= effectiveHealth) return isEnemyHoldingTotem(target) ? 0xFFF2FF00 : 0xFFFF0000;
-        return 0xFFFFFFFF;
-    }
-
-    private static boolean isEnemyHoldingTotem(LivingEntity e) {
-        return e.getEquippedStack(EquipmentSlot.MAINHAND).isOf(Items.TOTEM_OF_UNDYING) || e.getEquippedStack(EquipmentSlot.OFFHAND).isOf(Items.TOTEM_OF_UNDYING);
-    }
+    private static boolean isEnemyHoldingTotem(LivingEntity e) { return e.getEquippedStack(EquipmentSlot.MAINHAND).isOf(Items.TOTEM_OF_UNDYING) || e.getEquippedStack(EquipmentSlot.OFFHAND).isOf(Items.TOTEM_OF_UNDYING); }
 
     private static void renderIndicator(DrawContext ctx, MinecraftClient c, float dmg, int color, boolean isMain, String suffix, boolean isHealing) {
         if (!suffix.equals("X") && dmg < 0.1F) return;
-        String txt = suffix.equals("X") ? "X" : (isHealing ? "+" : "") + String.format("%.1f", dmg) + suffix;
-        renderString(ctx, c, txt, color, isMain);
+        renderString(ctx, c, (suffix.equals("X") ? "X" : (isHealing ? "+" : "") + String.format("%.1f", dmg) + suffix), color, isMain);
     }
 
     private static void renderString(DrawContext ctx, MinecraftClient c, String txt, int color, boolean isMain) {
-        int centerX = c.getWindow().getScaledWidth() / 2;
-        int centerY = (c.getWindow().getScaledHeight() / 2) - 4;
-        int x = isMain ? centerX + 15 : centerX - 15 - c.textRenderer.getWidth(txt);
-        ctx.drawTextWithShadow(c.textRenderer, txt, x, centerY, color);
+        int centerX = c.getWindow().getScaledWidth() / 2, centerY = (c.getWindow().getScaledHeight() / 2) - 4;
+        ctx.drawTextWithShadow(c.textRenderer, txt, isMain ? centerX + 15 : centerX - 15 - c.textRenderer.getWidth(txt), centerY, color);
     }
 
     private static float getLastDamageTaken(LivingEntity entity) {
         if (!fieldSearched) {
-            String[] mappings = {"lastDamageTaken", "field_6235", "lastDamage"};
-            for (String mapping : mappings) {
-                try {
-                    lastDamageField = LivingEntity.class.getDeclaredField(mapping);
-                    lastDamageField.setAccessible(true);
-                    break;
-                } catch (Exception ignored) {}
+            for (String m : new String[]{"lastDamageTaken", "field_6235", "lastDamage"}) {
+                try { lastDamageField = LivingEntity.class.getDeclaredField(m); lastDamageField.setAccessible(true); break; } catch (Exception ignored) {}
             }
             fieldSearched = true;
         }
-        try {
-            return lastDamageField != null ? lastDamageField.getFloat(entity) : 0.0F;
-        } catch (Exception e) {
-            return 0.0F;
-        }
+        try { return lastDamageField != null ? lastDamageField.getFloat(entity) : 0; } catch (Exception e) { return 0; }
     }
 }
