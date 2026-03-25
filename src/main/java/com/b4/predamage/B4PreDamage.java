@@ -6,6 +6,7 @@ public class B4PreDamage implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        ModConfig.load();
         System.out.println("B4 Main Initialized!");
     }
 }
