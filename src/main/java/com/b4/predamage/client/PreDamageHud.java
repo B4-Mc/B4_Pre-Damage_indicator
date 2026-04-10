@@ -53,7 +53,6 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 import org.lwjgl.glfw.GLFW;
 
-import java.lang.reflect.Field;
 import java.util.Comparator;
 import java.util.Locale;
 
@@ -70,14 +69,10 @@ public class PreDamageHud {
 
     private static boolean debugMenuEnabled = false;
     private static boolean debugKeyHeld = false;
-    private static DamageBreakdown lastMainBreakdown = null;
 
     private static final long TARGET_LOSS_GRACE_MS = 2000L;
     private static long mainLastTargetTimestampMs = 0L;
     private static String mainLastWeaponKey = "";
-
-    private static Field lastDamageField = null;
-    private static boolean fieldSearched = false;
 
     public static void processHand(MinecraftClient client, DrawContext ctx, ItemStack stack, boolean isMain) {
         if (client.player == null || client.world == null) return;
@@ -106,6 +101,7 @@ public class PreDamageHud {
                 && client.player.getActiveHand() == (isMain ? Hand.MAIN_HAND : Hand.OFF_HAND);
         boolean isChargedCrossbow = stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack);
         boolean potentialInteractionHealingItem = ModConfig.enableInteractionHealing && isPotentialInteractionHealingItem(stack);
+        String damageType = resolveDamageType(stack, isUsingThisHand, isChargedCrossbow);
 
         if (!isMain) {
             boolean isThrownPotion = stack.isOf(Items.SPLASH_POTION) || stack.isOf(Items.LINGERING_POTION);
@@ -135,7 +131,7 @@ public class PreDamageHud {
             if (isMain) {
                 expireOrKeepMainSmoothingState();
                 if (debugMenuEnabled) {
-                    renderDebugPanel(ctx, client, stack, rawHit, new DamageBreakdown(), false, isSpear, isUsingThisHand, false);
+                    renderDebugPanel(ctx, client, stack, rawHit, new DamageBreakdown(), false, isSpear, isUsingThisHand, false, isMain, damageType);
                 }
             } else {
                 offDisplayed = 0.0f;
@@ -156,7 +152,7 @@ public class PreDamageHud {
             if (isMain) {
                 expireOrKeepMainSmoothingState();
                 if (debugMenuEnabled) {
-                    renderDebugPanel(ctx, client, stack, rawHit, new DamageBreakdown(), false, isSpear, isUsingThisHand, false);
+                    renderDebugPanel(ctx, client, stack, rawHit, new DamageBreakdown(), false, isSpear, isUsingThisHand, false, isMain, damageType);
                 }
             } else {
                 offDisplayed = 0.0f;
@@ -199,6 +195,9 @@ public class PreDamageHud {
             breakdown.healing = true;
             breakdown.healingAmount = directHealing;
             breakdown.magicBonus = directHealing;
+            breakdown.baseDamage = directHealing;
+            breakdown.preMitigation = directHealing;
+            breakdown.initialOutput = directHealing;
             breakdown.finalDamage = directHealing;
         }
         if (!isMain && potentialInteractionHealingItem && directHealing <= 0.0f && overrideText == null) {
@@ -217,10 +216,12 @@ public class PreDamageHud {
                 overrideText = potionResult.overrideText;
                 isHealing = potionResult.healing;
                 breakdown.magicBonus = potionResult.value;
+                breakdown.initialOutput = potionResult.value;
             } else if (isSnowball) {
                 float snowballDamage = livingTarget.getType().equals(EntityType.BLAZE) ? 3.0f : 0.0f;
                 breakdown.baseDamage = snowballDamage;
                 breakdown.preMitigation = snowballDamage;
+                breakdown.initialOutput = snowballDamage;
                 finalValue = snowballDamage;
             } else if (stack.isOf(Items.TRIDENT)) {
                 float phys = calculateRawPhysical(client, livingTarget, stack, isCrit, false, false, breakdown);
@@ -256,8 +257,6 @@ public class PreDamageHud {
 
         if (livingTarget.timeUntilRegen > 10 && !isHealing && overrideText == null) {
             breakdown.hurtWindowWarning = true;
-            float alreadyAbsorbed = getLastDamageTaken(livingTarget);
-            finalValue = Math.max(0.0f, finalValue - alreadyAbsorbed);
         }
 
         if (isSplash && overrideText == null) {
@@ -343,9 +342,8 @@ public class PreDamageHud {
                 mainDisplayed = 0.0f;
             }
 
-            lastMainBreakdown = breakdown;
             if (debugMenuEnabled) {
-                renderDebugPanel(ctx, client, stack, targetEntity, breakdown, isCrit, isSpear, isUsingThisHand, isHealing);
+                renderDebugPanel(ctx, client, stack, targetEntity, breakdown, isCrit, isSpear, isUsingThisHand, isHealing, isMain, damageType);
             }
         } else {
             if (finalValue > 0.0f || overrideText != null || offDisplayed >= 0.1f) {
@@ -397,6 +395,21 @@ public class PreDamageHud {
         return itemName.contains("spear");
     }
 
+    private static String resolveDamageType(ItemStack stack, boolean isUsingThisHand, boolean isChargedCrossbow) {
+        if (stack.isOf(Items.SPLASH_POTION) || stack.isOf(Items.LINGERING_POTION)) {
+            return "magic";
+        }
+        if (stack.isOf(Items.CROSSBOW) && hasExplosiveFirework(stack)) {
+            return "explosion";
+        }
+        boolean isProjectile = stack.isOf(Items.BOW)
+                || stack.isOf(Items.CROSSBOW)
+                || stack.isOf(Items.SNOWBALL)
+                || (stack.isOf(Items.TRIDENT) && isUsingThisHand)
+                || isChargedCrossbow;
+        return isProjectile ? "projectile" : "melee";
+    }
+
     private static ReachProfile getReachProfile(MinecraftClient client, ItemStack stack, boolean isSpear, boolean isUsingThisHand) {
         if (client.player == null) return new ReachProfile(3.5f, false, 3.5f);
         float baseReach = (float) client.player.getAttributeValue(EntityAttributes.ENTITY_INTERACTION_RANGE);
@@ -442,11 +455,6 @@ public class PreDamageHud {
                     .orElse(null);
         }
 
-        if (profile.maxDistance <= 10.0 && client.crosshairTarget instanceof EntityHitResult hit) {
-            Entity crosshairEntity = hit.getEntity();
-            return hasClearLineOfSight(camera, crosshairEntity) ? crosshairEntity : null;
-        }
-
         Vec3d start = camera.getEyePos();
         Vec3d rotation = camera.getRotationVec(1.0f);
         Vec3d end = start.add(rotation.multiply(profile.maxDistance));
@@ -458,20 +466,63 @@ public class PreDamageHud {
                 camera
         ));
         double maxDistanceSquared = profile.maxDistance * profile.maxDistance;
+        double firstBlockDistanceSquared = maxDistanceSquared;
         if (blockHit.getType() == HitResult.Type.BLOCK) {
-            maxDistanceSquared = Math.min(maxDistanceSquared, start.squaredDistanceTo(blockHit.getPos()));
+            firstBlockDistanceSquared = Math.min(firstBlockDistanceSquared, start.squaredDistanceTo(blockHit.getPos()));
         }
+
+        if (client.crosshairTarget instanceof EntityHitResult hit) {
+            Entity crosshairEntity = hit.getEntity();
+            if (isValidRayTarget(camera, crosshairEntity, start, end, firstBlockDistanceSquared, maxDistanceSquared)) {
+                return crosshairEntity;
+            }
+        }
+
         EntityHitResult raycast = ProjectileUtil.raycast(
                 camera,
                 start,
                 end,
-                camera.getBoundingBox().stretch(rotation.multiply(profile.maxDistance)).expand(1.0d),
+                camera.getBoundingBox().stretch(rotation.multiply(profile.maxDistance)).expand(0.35d),
                 entity -> !entity.isSpectator() && entity.canHit(),
-                maxDistanceSquared
+                firstBlockDistanceSquared
         );
-        if (raycast == null) return null;
-        Entity hitEntity = raycast.getEntity();
-        return hasClearLineOfSight(camera, hitEntity) ? hitEntity : null;
+        if (raycast != null && isValidRayTarget(camera, raycast.getEntity(), start, end, firstBlockDistanceSquared, maxDistanceSquared)) {
+            return raycast.getEntity();
+        }
+
+        Box searchBox = camera.getBoundingBox().stretch(rotation.multiply(profile.maxDistance)).expand(0.35d);
+        Entity best = null;
+        double bestDistanceSquared = firstBlockDistanceSquared;
+        for (Entity candidate : client.world.getOtherEntities(camera, searchBox, entity -> !entity.isSpectator() && entity.canHit())) {
+            double candidateDistanceSquared = getRayHitDistanceSquared(start, end, candidate);
+            if (candidateDistanceSquared < 0.0d || candidateDistanceSquared > bestDistanceSquared + 1.0E-5) {
+                continue;
+            }
+            if (!hasClearLineOfSight(camera, candidate)) {
+                continue;
+            }
+            bestDistanceSquared = candidateDistanceSquared;
+            best = candidate;
+        }
+        return best;
+    }
+
+    private static boolean isValidRayTarget(Entity source, Entity target, Vec3d start, Vec3d end, double blockDistanceSquared, double maxDistanceSquared) {
+        if (target == null || target.isSpectator() || !target.canHit()) return false;
+        double hitDistanceSquared = getRayHitDistanceSquared(start, end, target);
+        if (hitDistanceSquared < 0.0d) return false;
+        if (hitDistanceSquared > maxDistanceSquared + 1.0E-5) return false;
+        if (hitDistanceSquared > blockDistanceSquared + 1.0E-5) return false;
+        return hasClearLineOfSight(source, target);
+    }
+
+    private static double getRayHitDistanceSquared(Vec3d start, Vec3d end, Entity entity) {
+        Box entityBox = entity.getBoundingBox().expand(entity.getTargetingMargin());
+        if (entityBox.contains(start)) {
+            return 0.0d;
+        }
+        var hit = entityBox.raycast(start, end);
+        return hit.map(vec3d -> start.squaredDistanceTo(vec3d)).orElse(-1.0d);
     }
 
     private static boolean withinHorizontalLimit(Entity source, Entity target, float horizontalLimit) {
@@ -540,7 +591,7 @@ public class PreDamageHud {
             pull = (pull * pull + pull * 2.0f) / 3.0f;
             float base = (pull * 7.0f) + 2.0f;
             breakdown.baseDamage = base;
-            breakdown.preMitigation = applyPowerEnchantment(client, stack, base);
+            breakdown.preMitigation = applyPowerEnchantment(client, stack, base, breakdown);
             return breakdown.preMitigation;
         }
 
@@ -561,7 +612,7 @@ public class PreDamageHud {
 
             float base = 9.0f;
             breakdown.baseDamage = base;
-            breakdown.preMitigation = applyPowerEnchantment(client, stack, base);
+            breakdown.preMitigation = applyPowerEnchantment(client, stack, base, breakdown);
             return breakdown.preMitigation;
         }
 
@@ -604,9 +655,11 @@ public class PreDamageHud {
         }
 
         if (isCrit) {
+            breakdown.critBonus = total * 0.5f;
             total *= 1.5f;
             breakdown.critMultiplier = 1.5f;
         } else {
+            breakdown.critBonus = 0.0f;
             breakdown.critMultiplier = 1.0f;
         }
 
@@ -684,21 +737,31 @@ public class PreDamageHud {
     ) {
         var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
         float enchantBonus = 0.0f;
+        int enchantmentLevel = breakdown.enchantmentLevel;
 
         int sharpness = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.SHARPNESS), stack);
         if (sharpness > 0) {
             enchantBonus += 0.5f * sharpness + 0.5f;
+            enchantmentLevel = Math.max(enchantmentLevel, sharpness);
         }
         int smite = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.SMITE), stack);
         if (smite > 0 && target.getType().isIn(EntityTypeTags.SENSITIVE_TO_SMITE)) {
             enchantBonus += smite * 2.5f;
+            enchantmentLevel = Math.max(enchantmentLevel, smite);
+        }
+        int bane = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BANE_OF_ARTHROPODS), stack);
+        if (bane > 0 && target.getType().isIn(EntityTypeTags.SENSITIVE_TO_BANE_OF_ARTHROPODS)) {
+            enchantBonus += bane * 2.5f;
+            enchantmentLevel = Math.max(enchantmentLevel, bane);
         }
         int impaling = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.IMPALING), stack);
         if (impaling > 0 && target.getType().isIn(EntityTypeTags.SENSITIVE_TO_IMPALING)) {
             enchantBonus += impaling * 2.5f;
+            enchantmentLevel = Math.max(enchantmentLevel, impaling);
         }
 
-        breakdown.enchantmentBonus = enchantBonus;
+        breakdown.enchantmentBonus += enchantBonus;
+        breakdown.enchantmentLevel = enchantmentLevel;
 
         float armor = (float) target.getAttributeValue(EntityAttributes.ARMOR);
         float toughness = (float) target.getAttributeValue(EntityAttributes.ARMOR_TOUGHNESS);
@@ -711,18 +774,29 @@ public class PreDamageHud {
         breakdown.armor = armor;
         breakdown.toughness = toughness;
 
-        float afterArmor = DamageUtil.getDamageLeft(target, physicalDamage + enchantBonus, target.getDamageSources().generic(), armor, toughness);
+        float armorInput = physicalDamage + enchantBonus;
+        breakdown.initialOutput = armorInput + magicDamage;
+        breakdown.armorInput = armorInput;
+
+        float afterArmor = DamageUtil.getDamageLeft(target, armorInput, target.getDamageSources().generic(), armor, toughness);
         breakdown.afterArmor = afterArmor;
+        breakdown.armorPenalty = Math.max(0.0f, armorInput - afterArmor);
+        breakdown.armorPenaltyPercent = armorInput > 0.0f ? (breakdown.armorPenalty / armorInput) * 100.0f : 0.0f;
 
         float resistanceMultiplier = 1.0f;
+        int resistanceLevel = 0;
         if (!isHealing && target.hasStatusEffect(StatusEffects.RESISTANCE)) {
-            int amplifier = target.getStatusEffect(StatusEffects.RESISTANCE).getAmplifier() + 1;
-            resistanceMultiplier = Math.max(0.0f, 1.0f - amplifier * 0.2f);
+            resistanceLevel = target.getStatusEffect(StatusEffects.RESISTANCE).getAmplifier() + 1;
+            resistanceMultiplier = Math.max(0.0f, 1.0f - resistanceLevel * 0.2f);
         }
         breakdown.resistanceMultiplier = resistanceMultiplier;
+        breakdown.resistanceLevel = resistanceLevel;
 
         float resistanceInput = isHealing ? afterArmor : (afterArmor + magicDamage);
+        breakdown.resistanceInput = resistanceInput;
         float afterResistance = resistanceInput * resistanceMultiplier;
+        breakdown.resistancePenalty = Math.max(0.0f, resistanceInput - afterResistance);
+        breakdown.resistancePenaltyPercent = resistanceInput > 0.0f ? (breakdown.resistancePenalty / resistanceInput) * 100.0f : 0.0f;
 
         int epf = 0;
         for (EquipmentSlot slot : new EquipmentSlot[]{EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
@@ -738,9 +812,13 @@ public class PreDamageHud {
         float protectionMultiplier = 1.0f - (Math.min(20.0f, (float) epf) * 0.04f);
         breakdown.protectionMultiplier = protectionMultiplier;
 
+        float afterProtection = afterResistance * protectionMultiplier;
+        breakdown.protectionPenalty = Math.max(0.0f, afterResistance - afterProtection);
+        breakdown.protectionPenaltyPercent = afterResistance > 0.0f ? (breakdown.protectionPenalty / afterResistance) * 100.0f : 0.0f;
+
         float finalDamage = isHealing
-                ? (afterResistance * protectionMultiplier) + magicDamage
-                : afterResistance * protectionMultiplier;
+                ? afterProtection + magicDamage
+                : afterProtection;
         breakdown.finalDamage = finalDamage;
         return finalDamage;
     }
@@ -754,6 +832,8 @@ public class PreDamageHud {
         boolean immuneToPoison = undead
                 || target instanceof EnderDragonEntity
                 || target instanceof WitherEntity
+                || target.getType().equals(EntityType.SPIDER)
+                || target.getType().equals(EntityType.CAVE_SPIDER)
                 || target.getType().equals(EntityType.BOGGED);
         var effects = contents.potion().isPresent() ? contents.potion().get().value().getEffects() : contents.getEffects();
 
@@ -775,7 +855,7 @@ public class PreDamageHud {
             boolean isHarm = effect.getEffectType().equals(StatusEffects.INSTANT_DAMAGE);
             boolean isPoison = effect.getEffectType().equals(StatusEffects.POISON);
             boolean isRegen = effect.getEffectType().equals(StatusEffects.REGENERATION);
-            String heartText = effect.getAmplifier() > 0 ? "<3+" : "<3";
+            String heartText = effect.getAmplifier() > 0 ? "💕" : "❤";
 
             if (target instanceof EndermanEntity && isHarm) {
                 result.value = 0.0f;
@@ -949,10 +1029,14 @@ public class PreDamageHud {
         return ItemStack.EMPTY;
     }
 
-    private static float applyPowerEnchantment(MinecraftClient client, ItemStack stack, float baseDamage) {
+    private static float applyPowerEnchantment(MinecraftClient client, ItemStack stack, float baseDamage, DamageBreakdown breakdown) {
         var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
         int level = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.POWER), stack);
-        return level > 0 ? baseDamage + (0.5f * level + 0.5f) : baseDamage;
+        if (level <= 0) return baseDamage;
+        float bonus = 0.5f * level + 0.5f;
+        breakdown.enchantmentLevel = Math.max(breakdown.enchantmentLevel, level);
+        breakdown.enchantmentBonus += bonus;
+        return baseDamage + bonus;
     }
 
     private static boolean hasExplosiveFirework(ItemStack stack) {
@@ -1011,18 +1095,26 @@ public class PreDamageHud {
             boolean isCrit,
             boolean isSpear,
             boolean isUsingThisHand,
-            boolean isHealing
+            boolean isHealing,
+            boolean isMain,
+            String damageType
     ) {
         int x = 8;
         int y = 8;
-        int color = 0xFFE6E6E6;
+        int neutralColor = 0xFFE6E6E6;
+        int inputOutputColor = 0xFF8FFF48;
+        int finalOutputColor = 0xFFFFA640;
+        int immuneDebugColor = applyConfiguredColor(IMMUNE_COLOR);
+        float strWeakBonus = breakdown.strengthBonus + breakdown.weaknessPenalty;
+        String spearRelativeSpeed = isSpear ? String.format(Locale.ROOT, "%.2fm/s", breakdown.spearRelativeSpeed) : "n/a";
+        String healingAmount = isHealing ? String.format(Locale.ROOT, "%.2f", breakdown.healingAmount) : "n/a";
 
         drawDebugLine(ctx, client, x, y, "B4's Pre-Damage Indicator Debug Mode [F7]", 0xFFFFFFFF);
         y += 10;
-        drawDebugLine(ctx, client, x, y, "Item: " + stack.getName().getString(), color);
+        drawDebugLine(ctx, client, x, y, "Item: " + stack.getName().getString(), neutralColor);
         y += 10;
         String targetType = target == null ? "none" : String.valueOf(Registries.ENTITY_TYPE.getId(target.getType()));
-        drawDebugLine(ctx, client, x, y, "Target: " + targetType, color);
+        drawDebugLine(ctx, client, x, y, "Target: " + targetType, neutralColor);
         y += 10;
         if (target instanceof LivingEntity livingTarget) {
             drawDebugLine(
@@ -1031,40 +1123,116 @@ public class PreDamageHud {
                     x,
                     y,
                     String.format(Locale.ROOT, "Target HP: %.1f/%.1f", livingTarget.getHealth() + livingTarget.getAbsorptionAmount(), livingTarget.getMaxHealth()),
-                    color
+                    neutralColor
             );
         } else {
-            drawDebugLine(ctx, client, x, y, "Target HP: n/a", color);
+            drawDebugLine(ctx, client, x, y, "Target HP: n/a", neutralColor);
         }
         y += 10;
-        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Input base=%.2f str=%.2f weak=%.2f crit=%.2f", breakdown.baseDamage, breakdown.strengthBonus, breakdown.weaknessPenalty, breakdown.critMultiplier), color);
+        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Initial input: %.2f  str/weak bonus: %s", breakdown.baseDamage, formatSignedValue(strWeakBonus)), neutralColor);
         y += 10;
-        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Input ench=%.2f magic=%.2f", breakdown.enchantmentBonus, breakdown.magicBonus), color);
+        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Crit: %s (x%.1f)  Bonus: %s", isCrit, breakdown.critMultiplier, formatSignedValue(breakdown.critBonus)), neutralColor);
         y += 10;
-        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Mace fallDist=%.2f bonus=%.2f", breakdown.maceFallDistance, breakdown.maceFallBonus), color);
+        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Ench lvl: %d  Bonus: %s", breakdown.enchantmentLevel, formatSignedValue(breakdown.enchantmentBonus)), neutralColor);
         y += 10;
-        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Spear fwd=%.2f rel=%.2f bonus=%.2f", breakdown.spearForwardSpeed, breakdown.spearRelativeSpeed, breakdown.spearVelocityBonus), color);
+        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Magic bonus: %s", formatSignedValue(breakdown.magicBonus)), neutralColor);
         y += 10;
-        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "After armor=%.2f armor=%.1f tough=%.1f", breakdown.afterArmor, breakdown.armor, breakdown.toughness), color);
+        drawDebugLine(
+                ctx,
+                client,
+                x,
+                y,
+                String.format(
+                        Locale.ROOT,
+                        "Is Spear: %s  Vel: p:(%.2fm/s) t:(%s)  Bonus: %s",
+                        isSpear,
+                        breakdown.spearForwardSpeed,
+                        spearRelativeSpeed,
+                        formatSignedValue(breakdown.spearVelocityBonus)
+                ),
+                neutralColor
+        );
         y += 10;
-        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Resistance x%.2f EPF=%d prot x%.2f", breakdown.resistanceMultiplier, breakdown.epf, breakdown.protectionMultiplier), color);
+        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Is Mace: %s  fallDist: %.2f  Bonus: %s", stack.isOf(Items.MACE), breakdown.maceFallDistance, formatSignedValue(breakdown.maceFallBonus)), neutralColor);
         y += 10;
-        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Output final=%.2f immune=%s", breakdown.finalDamage, breakdown.immune ? "yes" : "no"), color);
+        drawDebugLine(ctx, client, x, y, "Is offhand: " + !isMain + "  type: " + damageType + "  Is using: " + isUsingThisHand, neutralColor);
         y += 10;
-        drawDebugLine(ctx, client, x, y, "Flags: crit=" + isCrit + " spear=" + isSpear + " using=" + isUsingThisHand, color);
+        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Final Input/Initial Output: %.2f", breakdown.initialOutput), inputOutputColor);
         y += 10;
-        drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Healing: %s amount=%.2f", isHealing, breakdown.healingAmount), color);
+        drawDebugLine(
+                ctx,
+                client,
+                x,
+                y,
+                String.format(
+                        Locale.ROOT,
+                        "Armor: %.2f  Tough: %.2f  Penalty: (-%d%%) -%.2f",
+                        breakdown.armor,
+                        breakdown.toughness,
+                        Math.round(breakdown.armorPenaltyPercent),
+                        breakdown.armorPenalty
+                ),
+                neutralColor
+        );
         y += 10;
-        drawDebugLine(ctx, client, x, y, "Warn: cooldown=" + breakdown.cooldownWarning + " hurtWindow=" + breakdown.hurtWindowWarning, 0xFFFFC04A);
-
-        if (lastMainBreakdown != null && lastMainBreakdown != breakdown) {
-            y += 10;
-            drawDebugLine(ctx, client, x, y, String.format(Locale.ROOT, "Last main final=%.2f", lastMainBreakdown.finalDamage), 0xFFB9B9B9);
-        }
+        drawDebugLine(
+                ctx,
+                client,
+                x,
+                y,
+                String.format(
+                        Locale.ROOT,
+                        "Resistance lvl: %d (-%d%%)  Penalty: -%.2f",
+                        breakdown.resistanceLevel,
+                        Math.round(breakdown.resistancePenaltyPercent),
+                        breakdown.resistancePenalty
+                ),
+                neutralColor
+        );
+        y += 10;
+        drawDebugLine(
+                ctx,
+                client,
+                x,
+                y,
+                String.format(
+                        Locale.ROOT,
+                        "EPF: %d  (-%d%%)  Penalty: -%.2f",
+                        breakdown.epf,
+                        Math.round(breakdown.protectionPenaltyPercent),
+                        breakdown.protectionPenalty
+                ),
+                neutralColor
+        );
+        y += 10;
+        drawDebugSegments(
+                ctx,
+                client,
+                x,
+                y,
+                new DebugSegment(String.format(Locale.ROOT, "Final Output: %.2f  ", breakdown.finalDamage), finalOutputColor),
+                new DebugSegment("Is immune: " + breakdown.immune, immuneDebugColor)
+        );
+        y += 10;
+        drawDebugLine(ctx, client, x, y, "Is Healing: " + isHealing + "  Amount: " + healingAmount, neutralColor);
+        y += 10;
+        drawDebugLine(ctx, client, x, y, "Cooldown: " + breakdown.cooldownWarning + "  HurtWindow: " + breakdown.hurtWindowWarning, 0xFFFFC04A);
     }
 
     private static void drawDebugLine(DrawContext ctx, MinecraftClient client, int x, int y, String text, int color) {
         ctx.drawTextWithShadow(client.textRenderer, text, x, y, color);
+    }
+
+    private static void drawDebugSegments(DrawContext ctx, MinecraftClient client, int x, int y, DebugSegment... segments) {
+        int cursorX = x;
+        for (DebugSegment segment : segments) {
+            ctx.drawTextWithShadow(client.textRenderer, segment.text, cursorX, y, segment.color);
+            cursorX += client.textRenderer.getWidth(segment.text);
+        }
+    }
+
+    private static String formatSignedValue(float value) {
+        return String.format(Locale.ROOT, "%+.2f", value);
     }
 
     private static String buildMainWeaponKey(PlayerEntity player, ItemStack stack) {
@@ -1084,26 +1252,10 @@ public class PreDamageHud {
         }
     }
 
-    private static float getLastDamageTaken(LivingEntity entity) {
-        if (!fieldSearched) {
-            for (String fieldName : new String[]{"lastDamageTaken", "field_6235", "lastDamage"}) {
-                try {
-                    lastDamageField = LivingEntity.class.getDeclaredField(fieldName);
-                    lastDamageField.setAccessible(true);
-                    break;
-                } catch (Exception ignored) {
-                }
-            }
-            fieldSearched = true;
-        }
-        try {
-            return lastDamageField != null ? lastDamageField.getFloat(entity) : 0.0f;
-        } catch (Exception ignored) {
-            return 0.0f;
-        }
+    private record ReachProfile(float maxDistance, boolean maceVerticalOnly, float horizontalLimit) {
     }
 
-    private record ReachProfile(float maxDistance, boolean maceVerticalOnly, float horizontalLimit) {
+    private record DebugSegment(String text, int color) {
     }
 
     private static class DamageBreakdown {
@@ -1111,20 +1263,32 @@ public class PreDamageHud {
         float strengthBonus;
         float weaknessPenalty;
         float critMultiplier;
+        float critBonus;
         float maceFallDistance;
         float maceFallBonus;
         float spearForwardSpeed;
         float spearRelativeSpeed;
         float spearVelocityBonus;
         float preMitigation;
+        float initialOutput;
+        int enchantmentLevel;
         float enchantmentBonus;
         float magicBonus;
         float armor;
         float toughness;
+        float armorInput;
+        float armorPenalty;
+        float armorPenaltyPercent;
         float afterArmor;
+        int resistanceLevel;
         float resistanceMultiplier = 1.0f;
+        float resistanceInput;
+        float resistancePenalty;
+        float resistancePenaltyPercent;
         int epf;
         float protectionMultiplier = 1.0f;
+        float protectionPenalty;
+        float protectionPenaltyPercent;
         boolean immune;
         boolean healing;
         boolean cooldownWarning;
