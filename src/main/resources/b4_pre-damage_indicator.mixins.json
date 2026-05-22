@@ -1,14 +1,11 @@
 {
   "required": true,
-  "minVersion": "0.8",
-  "package": "",
+  "package": "com.b4.predamage.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "LivingEntityAccessor"
   ],
   "injectors": {
     "defaultRequire": 1
-  },
-  "overwrites": {
-    "requireAnnotations": true
   }
 }

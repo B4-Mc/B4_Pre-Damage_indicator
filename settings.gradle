@@ -7,3 +7,5 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
+
+rootProject.name = "b4_pre-damage_indicator"
