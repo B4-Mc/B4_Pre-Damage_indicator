@@ -19,9 +19,6 @@
     ],
     "main": [
       "com.b4.predamage.B4PreDamage"
-    ],
-    "modmenu": [
-      "com.b4.predamage.client.ModMenuIntegration"
     ]
   },
   "mixins": [

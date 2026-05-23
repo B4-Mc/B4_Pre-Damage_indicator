@@ -36,6 +36,7 @@ loom {
 
     runs {
         configureEach {
+            runDir "run/${project.minecraft_version}"
             property "fabric.runtimeMappingNamespace", "named"
             property "fabric.defaultModDistributionNamespace", "named"
         }
@@ -54,6 +55,51 @@ repositories {
     maven { url "https://maven.isxander.dev/releases" }
     maven { url "https://pkgs.dev.azure.com/isxander-dev/yet-another-config-lib/_maven/v2" }
     mavenCentral()
+}
+
+def generatedMixinSourceDir = layout.buildDirectory.dir("generated/sources/predamageMixin/java")
+sourceSets.main.java.srcDir(generatedMixinSourceDir)
+
+tasks.register("generateLivingEntityAccessor") {
+    def outputFile = generatedMixinSourceDir.map {
+        it.file("com/b4/predamage/mixin/LivingEntityAccessor.java")
+    }
+
+    inputs.property("minecraftVersion", project.minecraft_version)
+    outputs.file(outputFile)
+
+    doLast {
+        def file = outputFile.get().asFile
+        file.parentFile.mkdirs()
+        file.text = """package com.b4.predamage.mixin;
+
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.gen.Accessor;
+
+import java.util.List;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.world.entity.LivingEntity;
+
+@Mixin(LivingEntity.class)
+public interface LivingEntityAccessor {
+    @Accessor("DATA_EFFECT_PARTICLES")
+    static EntityDataAccessor<List<ParticleOptions>> predamage\$getPotionSwirls() {
+        throw new AssertionError();
+    }
+}
+"""
+    }
+}
+
+tasks.named("compileJava").configure {
+    dependsOn("generateLivingEntityAccessor")
+}
+
+tasks.withType(Jar).configureEach {
+    if (name == "sourcesJar") {
+        dependsOn("generateLivingEntityAccessor")
+    }
 }
 
 dependencies {
@@ -124,6 +170,12 @@ java {
         toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     }
     withSourcesJar()
+}
+
+tasks.withType(JavaExec).configureEach {
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    }
 }
 
 jar {
