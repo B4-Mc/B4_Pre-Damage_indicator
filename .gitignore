@@ -1,5 +1,9 @@
 .gradle/
 build/
 run/
-.idea/
+.idea/*
+!.idea/runConfigurations/
+.idea/runConfigurations/*
+!.idea/runConfigurations/Minecraft_Client.xml
+src/main/java/com/b4/predamage/mixin/LivingEntityAccessor.java
 *.log
