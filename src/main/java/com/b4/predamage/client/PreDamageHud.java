@@ -2,64 +2,64 @@ package com.b4.predamage.client;
 
 import com.b4.predamage.ModConfig;
 import com.b4.predamage.mixin.LivingEntityAccessor;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.ChargedProjectilesComponent;
-import net.minecraft.component.type.FireworksComponent;
-import net.minecraft.component.type.KineticWeaponComponent;
-import net.minecraft.enchantment.EnchantmentHelper;
-import net.minecraft.enchantment.Enchantments;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.attribute.EntityAttributeModifier;
-import net.minecraft.entity.attribute.EntityAttributes;
-import net.minecraft.entity.boss.WitherEntity;
-import net.minecraft.entity.boss.dragon.EnderDragonEntity;
-import net.minecraft.entity.boss.dragon.EnderDragonPart;
-import net.minecraft.entity.decoration.ArmorStandEntity;
-import net.minecraft.entity.effect.StatusEffectInstance;
-import net.minecraft.entity.effect.StatusEffect;
-import net.minecraft.entity.effect.StatusEffects;
-import net.minecraft.entity.mob.CreakingEntity;
-import net.minecraft.entity.mob.EndermanEntity;
-import net.minecraft.entity.mob.WitchEntity;
-import net.minecraft.entity.passive.AbstractHorseEntity;
-import net.minecraft.entity.passive.AbstractNautilusEntity;
-import net.minecraft.entity.passive.CamelEntity;
-import net.minecraft.entity.passive.CatEntity;
-import net.minecraft.entity.passive.IronGolemEntity;
-import net.minecraft.entity.passive.LlamaEntity;
-import net.minecraft.entity.passive.WolfEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.entity.projectile.ProjectileUtil;
-import net.minecraft.item.CrossbowItem;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.particle.ParticleEffect;
-import net.minecraft.particle.TintedParticleEffect;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.registry.tag.EntityTypeTags;
-import net.minecraft.registry.tag.ItemTags;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.block.Blocks;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
+import com.mojang.blaze3d.platform.InputConstants;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.core.Holder;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.particles.ColorParticleOption;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.tags.EntityTypeTags;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.effect.MobEffect;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.animal.camel.Camel;
+import net.minecraft.world.entity.animal.equine.AbstractHorse;
+import net.minecraft.world.entity.animal.equine.Llama;
+import net.minecraft.world.entity.animal.feline.Cat;
+import net.minecraft.world.entity.animal.golem.IronGolem;
+import net.minecraft.world.entity.animal.nautilus.AbstractNautilus;
+import net.minecraft.world.entity.animal.wolf.Wolf;
+import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
+import net.minecraft.world.entity.boss.enderdragon.EnderDragonPart;
+import net.minecraft.world.entity.boss.wither.WitherBoss;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.monster.EnderMan;
+import net.minecraft.world.entity.monster.Witch;
+import net.minecraft.world.entity.monster.creaking.Creaking;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.ProjectileUtil;
+import net.minecraft.world.item.CrossbowItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.ChargedProjectiles;
+import net.minecraft.world.item.component.Fireworks;
+import net.minecraft.world.item.component.KineticWeapon;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 
 public class PreDamageHud {
     private static final int IMMUNE_COLOR = 0xFF0000AA;
@@ -78,8 +78,8 @@ public class PreDamageHud {
     private static long mainLastTargetTimestampMs = 0L;
     private static String mainLastWeaponKey = "";
 
-    public static void processHand(MinecraftClient client, DrawContext ctx, ItemStack stack, boolean isMain) {
-        if (client.player == null || client.world == null) return;
+    public static void processHand(Minecraft client, GuiGraphicsExtractor ctx, ItemStack stack, boolean isMain) {
+        if (client.player == null || client.level == null) return;
         if (!ModConfig.modEnabled) return;
 
         debugMenuEnabled = ModConfig.debugOverlayEnabled;
@@ -98,18 +98,18 @@ public class PreDamageHud {
         }
 
         boolean isSpear = isSpearWeapon(stack);
-        boolean isSnowball = stack.isOf(Items.SNOWBALL);
+        boolean isSnowball = stack.is(Items.SNOWBALL);
         boolean isUsingThisHand = client.player.isUsingItem()
-                && client.player.getActiveHand() == (isMain ? Hand.MAIN_HAND : Hand.OFF_HAND);
-        boolean isChargedCrossbow = stack.isOf(Items.CROSSBOW) && CrossbowItem.isCharged(stack);
+                && client.player.getUsedItemHand() == (isMain ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND);
+        boolean isChargedCrossbow = stack.is(Items.CROSSBOW) && CrossbowItem.isCharged(stack);
         boolean potentialInteractionHealingItem = ModConfig.enableInteractionHealing && isPotentialInteractionHealingItem(stack);
         String damageType = resolveDamageType(stack, isUsingThisHand, isChargedCrossbow);
 
         if (!isMain) {
-            boolean isThrownPotion = stack.isOf(Items.SPLASH_POTION) || stack.isOf(Items.LINGERING_POTION);
-            boolean isValidOffhandWeapon = stack.isOf(Items.BOW)
-                    || stack.isOf(Items.CROSSBOW)
-                    || stack.isOf(Items.TRIDENT)
+            boolean isThrownPotion = stack.is(Items.SPLASH_POTION) || stack.is(Items.LINGERING_POTION);
+            boolean isValidOffhandWeapon = stack.is(Items.BOW)
+                    || stack.is(Items.CROSSBOW)
+                    || stack.is(Items.TRIDENT)
                     || isSpear
                     || isSnowball
                     || isThrownPotion
@@ -119,7 +119,7 @@ public class PreDamageHud {
                 return;
             }
 
-            boolean isUsingOffhand = client.player.isUsingItem() && client.player.getActiveHand() == Hand.OFF_HAND;
+            boolean isUsingOffhand = client.player.isUsingItem() && client.player.getUsedItemHand() == InteractionHand.OFF_HAND;
             if (!isUsingOffhand && !isChargedCrossbow && !isThrownPotion && !potentialInteractionHealingItem) {
                 renderIndicator(ctx, client, 0.1F, applyConfiguredColor(0xFFFFFFFF), false, "X", false);
                 return;
@@ -129,7 +129,7 @@ public class PreDamageHud {
         ReachProfile reachProfile = getReachProfile(client, stack, isSpear, isUsingThisHand);
         Entity rawHit = getTarget(client, reachProfile);
 
-        if (rawHit instanceof PlayerEntity playerTarget && (playerTarget.isCreative() || playerTarget.isSpectator())) {
+        if (rawHit instanceof Player playerTarget && (playerTarget.isCreative() || playerTarget.isSpectator())) {
             if (isMain) {
                 expireOrKeepMainSmoothingState();
                 if (debugMenuEnabled) {
@@ -145,11 +145,11 @@ public class PreDamageHud {
         Entity targetEntity = rawHit;
         if (rawHit instanceof EnderDragonPart part) {
             isDragonHead = part.name != null && part.name.contains("head");
-            targetEntity = part.owner;
+            targetEntity = part.parentMob;
         }
 
         if (!(targetEntity instanceof LivingEntity livingTarget)
-                || targetEntity instanceof ArmorStandEntity) {
+                || targetEntity instanceof ArmorStand) {
             if (isMain) {
                 expireOrKeepMainSmoothingState();
                 if (debugMenuEnabled) {
@@ -172,19 +172,19 @@ public class PreDamageHud {
         boolean isHealing = false;
         String overrideText = null;
 
-        boolean isSplash = stack.isOf(Items.SPLASH_POTION);
-        boolean isLingering = stack.isOf(Items.LINGERING_POTION);
-        boolean isExplosion = stack.isOf(Items.CROSSBOW) && hasExplosiveFirework(stack);
-        boolean isProjectile = (stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW) || stack.isOf(Items.SNOWBALL) || (stack.isOf(Items.TRIDENT) && isUsingThisHand))
+        boolean isSplash = stack.is(Items.SPLASH_POTION);
+        boolean isLingering = stack.is(Items.LINGERING_POTION);
+        boolean isExplosion = stack.is(Items.CROSSBOW) && hasExplosiveFirework(stack);
+        boolean isProjectile = (stack.is(Items.BOW) || stack.is(Items.CROSSBOW) || stack.is(Items.SNOWBALL) || (stack.is(Items.TRIDENT) && isUsingThisHand))
                 && !isExplosion;
         boolean isDeflectableProjectile = isProjectile || isExplosion || isSplash || isLingering;
-        Vec3d targetHitPos = getTargetHitPos(client, rawHit != null ? rawHit : targetEntity, reachProfile);
+        Vec3 targetHitPos = getTargetHitPos(client, rawHit != null ? rawHit : targetEntity, reachProfile);
         boolean blockedByShield = false;
 
         if (isBlockedByShield(client.player, livingTarget)) {
-            var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
-            boolean pierces = stack.isOf(Items.CROSSBOW)
-                    && EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PIERCING), stack) > 0;
+            var reg = client.level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
+            boolean pierces = stack.is(Items.CROSSBOW)
+                    && EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.PIERCING), stack) > 0;
 
             if (!pierces && !isSplash && !isLingering) {
                 blockedByShield = true;
@@ -209,7 +209,7 @@ public class PreDamageHud {
             return;
         }
 
-        if (livingTarget instanceof CreakingEntity || isDeflectedProjectileTarget(livingTarget, isDeflectableProjectile)) {
+        if (livingTarget instanceof Creaking || isDeflectedProjectileTarget(livingTarget, isDeflectableProjectile)) {
             finalValue = 0.0f;
             breakdown.immune = true;
         } else if (overrideText == null) {
@@ -229,7 +229,7 @@ public class PreDamageHud {
                 breakdown.preMitigation = snowballDamage;
                 breakdown.initialOutput = snowballDamage;
                 finalValue = snowballDamage;
-            } else if (stack.isOf(Items.TRIDENT)) {
+            } else if (stack.is(Items.TRIDENT)) {
                 float phys = calculateRawPhysical(client, livingTarget, stack, isCrit, false, false, breakdown);
                 if (isUsingThisHand) {
                     phys = 8.0f;
@@ -267,18 +267,18 @@ public class PreDamageHud {
             }
         }
 
-        if (livingTarget instanceof EnderDragonEntity dragon) {
+        if (livingTarget instanceof EnderDragon dragon) {
             if (!isHealing && overrideText == null && finalValue > 0.0f && !isDragonHead) {
                 finalValue = (finalValue / 4.0f) + 1.0f;
             }
-            int phaseId = dragon.getDataTracker().get(EnderDragonEntity.PHASE_TYPE);
+            int phaseId = dragon.getEntityData().get(EnderDragon.DATA_PHASE);
             if (phaseId >= 4 && phaseId <= 8 && isProjectile && overrideText == null) {
                 finalValue = 0.0f;
                 breakdown.immune = true;
             }
         }
 
-        if (livingTarget.timeUntilRegen > 10 && !isHealing && overrideText == null) {
+        if (livingTarget.invulnerableTime > 10 && !isHealing && overrideText == null) {
             breakdown.hurtWindowWarning = true;
         }
 
@@ -293,15 +293,15 @@ public class PreDamageHud {
             breakdown.healingAmount = finalValue;
         }
 
-        if (livingTarget instanceof WolfEntity wolf && !wolf.getBodyArmor().isEmpty() && !isSplash && !isLingering) {
+        if (livingTarget instanceof Wolf wolf && !wolf.getBodyArmorItem().isEmpty() && !isSplash && !isLingering) {
             finalValue = 0.0f;
             breakdown.immune = true;
         }
-        if (livingTarget instanceof EndermanEntity && isProjectile && overrideText == null) {
+        if (livingTarget instanceof EnderMan && isProjectile && overrideText == null) {
             finalValue = 0.0f;
             breakdown.immune = true;
         }
-        if (livingTarget instanceof WitherEntity wither && wither.getHealth() <= wither.getMaxHealth() / 2.0f && isProjectile && overrideText == null) {
+        if (livingTarget instanceof WitherBoss wither && wither.getHealth() <= wither.getMaxHealth() / 2.0f && isProjectile && overrideText == null) {
             finalValue = 0.0f;
             breakdown.immune = true;
         }
@@ -322,14 +322,14 @@ public class PreDamageHud {
                 && !isSplash
                 && !isLingering
                 && !isHealing
-                && client.player.getAttackCooldownProgress(0.5f) <= 0.9f;
+                && client.player.getAttackStrengthScale(0.5f) <= 0.9f;
         breakdown.finalDamage = finalValue;
         breakdown.healing = isHealing;
 
         String suffix = "";
         if (isCrit && !isProjectile && !isExplosion && !isSpear && !isSplash && !isLingering) {
             suffix = "^";
-        } else if ((isUsingThisHand && (stack.isOf(Items.BOW) || stack.isOf(Items.CROSSBOW) || isSpear)) || isChargedCrossbow) {
+        } else if ((isUsingThisHand && (stack.is(Items.BOW) || stack.is(Items.CROSSBOW) || isSpear)) || isChargedCrossbow) {
             suffix = "*";
         }
         if (ModConfig.showInaccuracyWarnings && (breakdown.cooldownWarning || breakdown.hurtWindowWarning)) {
@@ -352,7 +352,7 @@ public class PreDamageHud {
             } else {
                 mainDisplayed = (Math.abs(mainDisplayed - mainTarget) < 0.05f)
                         ? mainTarget
-                        : MathHelper.lerp(0.15f, mainDisplayed, mainTarget);
+                        : Mth.lerp(0.15f, mainDisplayed, mainTarget);
             }
 
             if (mainDisplayed >= 0.1f || overrideText != null) {
@@ -375,7 +375,7 @@ public class PreDamageHud {
                 } else {
                     offDisplayed = (Math.abs(offDisplayed - finalValue) < 0.05f)
                             ? finalValue
-                            : MathHelper.lerp(0.20f, offDisplayed, finalValue);
+                            : Mth.lerp(0.20f, offDisplayed, finalValue);
                 }
 
                 if (offDisplayed >= 0.1f || overrideText != null) {
@@ -391,8 +391,8 @@ public class PreDamageHud {
         }
     }
 
-    private static void toggleDebugMenu(MinecraftClient client) {
-        boolean keyDown = InputUtil.isKeyPressed(client.getWindow(), GLFW.GLFW_KEY_F7);
+    private static void toggleDebugMenu(Minecraft client) {
+        boolean keyDown = InputConstants.isKeyDown(client.getWindow(), GLFW.GLFW_KEY_F7);
         if (keyDown && !debugKeyHeld) {
             debugMenuEnabled = !debugMenuEnabled;
             ModConfig.debugOverlayEnabled = debugMenuEnabled;
@@ -402,38 +402,38 @@ public class PreDamageHud {
     }
 
     private static boolean isSpearWeapon(ItemStack stack) {
-        boolean hasSpearComponents = stack.contains(DataComponentTypes.KINETIC_WEAPON) && stack.contains(DataComponentTypes.PIERCING_WEAPON);
+        boolean hasSpearComponents = stack.has(DataComponents.KINETIC_WEAPON) && stack.has(DataComponents.PIERCING_WEAPON);
         if (hasSpearComponents) return true;
         String itemName = stack.getItem().toString().toLowerCase(Locale.ROOT);
         return itemName.contains("spear");
     }
 
     private static String resolveDamageType(ItemStack stack, boolean isUsingThisHand, boolean isChargedCrossbow) {
-        if (stack.isOf(Items.SPLASH_POTION) || stack.isOf(Items.LINGERING_POTION)) {
+        if (stack.is(Items.SPLASH_POTION) || stack.is(Items.LINGERING_POTION)) {
             return "magic";
         }
-        if (stack.isOf(Items.CROSSBOW) && hasExplosiveFirework(stack)) {
+        if (stack.is(Items.CROSSBOW) && hasExplosiveFirework(stack)) {
             return "explosion";
         }
-        boolean isProjectile = stack.isOf(Items.BOW)
-                || stack.isOf(Items.CROSSBOW)
-                || stack.isOf(Items.SNOWBALL)
-                || (stack.isOf(Items.TRIDENT) && isUsingThisHand)
+        boolean isProjectile = stack.is(Items.BOW)
+                || stack.is(Items.CROSSBOW)
+                || stack.is(Items.SNOWBALL)
+                || (stack.is(Items.TRIDENT) && isUsingThisHand)
                 || isChargedCrossbow;
         return isProjectile ? "projectile" : "melee";
     }
 
-    private static ReachProfile getReachProfile(MinecraftClient client, ItemStack stack, boolean isSpear, boolean isUsingThisHand) {
+    private static ReachProfile getReachProfile(Minecraft client, ItemStack stack, boolean isSpear, boolean isUsingThisHand) {
         if (client.player == null) return new ReachProfile(3.5f, false, 3.5f);
-        float baseReach = (float) client.player.getAttributeValue(EntityAttributes.ENTITY_INTERACTION_RANGE);
+        float baseReach = (float) client.player.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
 
-        if (ModConfig.enableVerticalMaceReach && stack.isOf(Items.MACE) && client.player.fallDistance > 0) {
+        if (ModConfig.enableVerticalMaceReach && stack.is(Items.MACE) && client.player.fallDistance > 0) {
             return new ReachProfile(100.0f, true, baseReach);
         }
-        if (stack.isOf(Items.BOW) || stack.isOf(Items.TRIDENT) || stack.isOf(Items.SNOWBALL)) {
+        if (stack.is(Items.BOW) || stack.is(Items.TRIDENT) || stack.is(Items.SNOWBALL)) {
             return new ReachProfile((isUsingThisHand ? 45.0f : baseReach), false, baseReach);
         }
-        if (stack.isOf(Items.CROSSBOW)) {
+        if (stack.is(Items.CROSSBOW)) {
             float reach = ModConfig.enableExtendedCrossbowReach ? 45.0f : baseReach;
             return new ReachProfile(reach, false, baseReach);
         }
@@ -446,12 +446,12 @@ public class PreDamageHud {
         return new ReachProfile(baseReach, false, baseReach);
     }
 
-    private static Entity getTarget(MinecraftClient client, ReachProfile profile) {
+    private static Entity getTarget(Minecraft client, ReachProfile profile) {
         Entity camera = client.getCameraEntity();
-        if (camera == null || client.world == null) return null;
+        if (camera == null || client.level == null) return null;
 
         if (profile.maceVerticalOnly) {
-            if (client.crosshairTarget instanceof EntityHitResult hit) {
+            if (client.hitResult instanceof EntityHitResult hit) {
                 Entity crosshairEntity = hit.getEntity();
                 if (crosshairEntity != null
                         && withinHorizontalLimit(camera, crosshairEntity, profile.horizontalLimit)
@@ -460,53 +460,53 @@ public class PreDamageHud {
                 }
             }
 
-            Box scanBox = camera.getBoundingBox().expand(profile.horizontalLimit, profile.maxDistance, profile.horizontalLimit);
-            return client.world.getOtherEntities(camera, scanBox, entity -> !entity.isSpectator() && entity.canHit() && withinHorizontalLimit(camera, entity, profile.horizontalLimit))
+            AABB scanBox = camera.getBoundingBox().inflate(profile.horizontalLimit, profile.maxDistance, profile.horizontalLimit);
+            return client.level.getEntities(camera, scanBox, entity -> !entity.isSpectator() && entity.isPickable() && withinHorizontalLimit(camera, entity, profile.horizontalLimit))
                     .stream()
                     .filter(entity -> hasClearLineOfSight(camera, entity))
                     .min(Comparator.comparingDouble(entity -> Math.abs(entity.getY() - camera.getY())))
                     .orElse(null);
         }
 
-        Vec3d start = camera.getEyePos();
-        Vec3d rotation = camera.getRotationVec(1.0f);
-        Vec3d end = start.add(rotation.multiply(profile.maxDistance));
-        BlockHitResult blockHit = client.world.raycast(new RaycastContext(
+        Vec3 start = camera.getEyePosition();
+        Vec3 rotation = camera.getViewVector(1.0f);
+        Vec3 end = start.add(rotation.scale(profile.maxDistance));
+        BlockHitResult blockHit = client.level.clip(new ClipContext(
                 start,
                 end,
-                RaycastContext.ShapeType.COLLIDER,
-                RaycastContext.FluidHandling.NONE,
+                ClipContext.Block.COLLIDER,
+                ClipContext.Fluid.NONE,
                 camera
         ));
         double maxDistanceSquared = profile.maxDistance * profile.maxDistance;
         double firstBlockDistanceSquared = maxDistanceSquared;
         if (blockHit.getType() == HitResult.Type.BLOCK) {
-            firstBlockDistanceSquared = Math.min(firstBlockDistanceSquared, start.squaredDistanceTo(blockHit.getPos()));
+            firstBlockDistanceSquared = Math.min(firstBlockDistanceSquared, start.distanceToSqr(blockHit.getLocation()));
         }
 
-        if (client.crosshairTarget instanceof EntityHitResult hit) {
+        if (client.hitResult instanceof EntityHitResult hit) {
             Entity crosshairEntity = hit.getEntity();
             if (isValidRayTarget(camera, crosshairEntity, start, end, firstBlockDistanceSquared, maxDistanceSquared)) {
                 return crosshairEntity;
             }
         }
 
-        EntityHitResult raycast = ProjectileUtil.raycast(
+        EntityHitResult raycast = ProjectileUtil.getEntityHitResult(
                 camera,
                 start,
                 end,
-                camera.getBoundingBox().stretch(rotation.multiply(profile.maxDistance)).expand(0.35d),
-                entity -> !entity.isSpectator() && entity.canHit(),
+                camera.getBoundingBox().expandTowards(rotation.scale(profile.maxDistance)).inflate(0.35d),
+                entity -> !entity.isSpectator() && entity.isPickable(),
                 firstBlockDistanceSquared
         );
         if (raycast != null && isValidRayTarget(camera, raycast.getEntity(), start, end, firstBlockDistanceSquared, maxDistanceSquared)) {
             return raycast.getEntity();
         }
 
-        Box searchBox = camera.getBoundingBox().stretch(rotation.multiply(profile.maxDistance)).expand(0.35d);
+        AABB searchBox = camera.getBoundingBox().expandTowards(rotation.scale(profile.maxDistance)).inflate(0.35d);
         Entity best = null;
         double bestDistanceSquared = firstBlockDistanceSquared;
-        for (Entity candidate : client.world.getOtherEntities(camera, searchBox, entity -> !entity.isSpectator() && entity.canHit())) {
+        for (Entity candidate : client.level.getEntities(camera, searchBox, entity -> !entity.isSpectator() && entity.isPickable())) {
             double candidateDistanceSquared = getRayHitDistanceSquared(start, end, candidate);
             if (candidateDistanceSquared < 0.0d || candidateDistanceSquared > bestDistanceSquared + 1.0E-5) {
                 continue;
@@ -520,8 +520,8 @@ public class PreDamageHud {
         return best;
     }
 
-    private static boolean isValidRayTarget(Entity source, Entity target, Vec3d start, Vec3d end, double blockDistanceSquared, double maxDistanceSquared) {
-        if (target == null || target.isSpectator() || !target.canHit()) return false;
+    private static boolean isValidRayTarget(Entity source, Entity target, Vec3 start, Vec3 end, double blockDistanceSquared, double maxDistanceSquared) {
+        if (target == null || target.isSpectator() || !target.isPickable()) return false;
         double hitDistanceSquared = getRayHitDistanceSquared(start, end, target);
         if (hitDistanceSquared < 0.0d) return false;
         if (hitDistanceSquared > maxDistanceSquared + 1.0E-5) return false;
@@ -529,25 +529,25 @@ public class PreDamageHud {
         return hasClearLineOfSight(source, target);
     }
 
-    private static double getRayHitDistanceSquared(Vec3d start, Vec3d end, Entity entity) {
-        Box entityBox = entity.getBoundingBox().expand(entity.getTargetingMargin());
+    private static double getRayHitDistanceSquared(Vec3 start, Vec3 end, Entity entity) {
+        AABB entityBox = entity.getBoundingBox().inflate(entity.getPickRadius());
         if (entityBox.contains(start)) {
             return 0.0d;
         }
-        var hit = entityBox.raycast(start, end);
-        return hit.map(vec3d -> start.squaredDistanceTo(vec3d)).orElse(-1.0d);
+        var hit = entityBox.clip(start, end);
+        return hit.map(vec3d -> start.distanceToSqr(vec3d)).orElse(-1.0d);
     }
 
-    private static Vec3d getTargetHitPos(MinecraftClient client, Entity target, ReachProfile profile) {
+    private static Vec3 getTargetHitPos(Minecraft client, Entity target, ReachProfile profile) {
         Entity camera = client.getCameraEntity();
         if (camera == null || target == null) {
-            return target != null ? target.getEntityPos() : Vec3d.ZERO;
+            return target != null ? target.position() : Vec3.ZERO;
         }
 
-        Vec3d start = camera.getEyePos();
-        Vec3d end = start.add(camera.getRotationVec(1.0f).multiply(profile.maxDistance));
-        Box entityBox = target.getBoundingBox().expand(target.getTargetingMargin());
-        return entityBox.raycast(start, end).orElse(target.getEntityPos());
+        Vec3 start = camera.getEyePosition();
+        Vec3 end = start.add(camera.getViewVector(1.0f).scale(profile.maxDistance));
+        AABB entityBox = target.getBoundingBox().inflate(target.getPickRadius());
+        return entityBox.clip(start, end).orElse(target.position());
     }
 
     private static boolean withinHorizontalLimit(Entity source, Entity target, float horizontalLimit) {
@@ -558,48 +558,48 @@ public class PreDamageHud {
 
     private static boolean hasClearLineOfSight(Entity source, Entity target) {
         if (source == null || target == null) return false;
-        Vec3d start = source.getEyePos();
-        Vec3d center = target.getBoundingBox().getCenter();
+        Vec3 start = source.getEyePosition();
+        Vec3 center = target.getBoundingBox().getCenter();
         if (isRayClear(source, start, center)) {
             return true;
         }
         if (target instanceof LivingEntity livingTarget) {
-            return isRayClear(source, start, livingTarget.getEyePos());
+            return isRayClear(source, start, livingTarget.getEyePosition());
         }
         return false;
     }
 
-    private static boolean isRayClear(Entity source, Vec3d start, Vec3d end) {
-        BlockHitResult blockHit = source.getEntityWorld().raycast(new RaycastContext(
+    private static boolean isRayClear(Entity source, Vec3 start, Vec3 end) {
+        BlockHitResult blockHit = source.level().clip(new ClipContext(
                 start,
                 end,
-                RaycastContext.ShapeType.COLLIDER,
-                RaycastContext.FluidHandling.NONE,
+                ClipContext.Block.COLLIDER,
+                ClipContext.Fluid.NONE,
                 source
         ));
         if (blockHit.getType() == HitResult.Type.MISS) {
             return true;
         }
-        double blockDistanceSquared = start.squaredDistanceTo(blockHit.getPos());
-        double targetDistanceSquared = start.squaredDistanceTo(end);
+        double blockDistanceSquared = start.distanceToSqr(blockHit.getLocation());
+        double targetDistanceSquared = start.distanceToSqr(end);
         return blockDistanceSquared + 1.0E-5 >= targetDistanceSquared;
     }
 
-    private static boolean isVanillaCrit(PlayerEntity player, Entity target) {
+    private static boolean isVanillaCrit(Player player, Entity target) {
         return player.fallDistance > 0.0f
-                && !player.isOnGround()
-                && !player.isClimbing()
-                && !player.isTouchingWater()
-                && !player.hasStatusEffect(StatusEffects.BLINDNESS)
-                && !player.hasStatusEffect(StatusEffects.SLOW_FALLING)
-                && !player.hasVehicle()
+                && !player.onGround()
+                && !player.onClimbable()
+                && !player.isInWater()
+                && !player.hasEffect(MobEffects.BLINDNESS)
+                && !player.hasEffect(MobEffects.SLOW_FALLING)
+                && !player.isPassenger()
                 && !player.isSprinting()
                 && target instanceof LivingEntity
-                && player.getAttackCooldownProgress(0.5f) > 0.9f;
+                && player.getAttackStrengthScale(0.5f) > 0.9f;
     }
 
     private static float calculateRawPhysical(
-            MinecraftClient client,
+            Minecraft client,
             LivingEntity target,
             ItemStack stack,
             boolean isCrit,
@@ -607,11 +607,11 @@ public class PreDamageHud {
             boolean isUsingThisHand,
             DamageBreakdown breakdown
     ) {
-        PlayerEntity player = client.player;
+        Player player = client.player;
 
-        if (stack.isOf(Items.BOW)) {
-            if (!(player.isUsingItem() && player.getActiveItem() == stack)) return 0.0f;
-            int ticks = stack.getMaxUseTime(player) - player.getItemUseTimeLeft();
+        if (stack.is(Items.BOW)) {
+            if (!(player.isUsingItem() && player.getUseItem() == stack)) return 0.0f;
+            int ticks = stack.getUseDuration(player) - player.getUseItemRemainingTicks();
             float pull = getBowPullProgress(ticks);
             if (pull < 0.1f) return 0.0f;
             float damage = calculateArrowDamageFromVelocity(client, stack, pull * 3.0f, true, pull >= 1.0f, breakdown);
@@ -620,12 +620,12 @@ public class PreDamageHud {
             return damage;
         }
 
-        if (stack.isOf(Items.CROSSBOW)) {
-            ChargedProjectilesComponent charged = stack.get(DataComponentTypes.CHARGED_PROJECTILES);
+        if (stack.is(Items.CROSSBOW)) {
+            ChargedProjectiles charged = stack.get(DataComponents.CHARGED_PROJECTILES);
             if (charged == null || charged.isEmpty()) return 0.0f;
 
-            ItemStack projectile = charged.getProjectiles().get(0);
-            if (projectile.isOf(Items.FIREWORK_ROCKET)) {
+            ItemStack projectile = charged.itemCopies().get(0);
+            if (projectile.is(Items.FIREWORK_ROCKET)) {
                 return 0.0f;
             }
 
@@ -636,7 +636,7 @@ public class PreDamageHud {
         }
 
         float baseDamage = isSpear && isUsingThisHand
-                ? (float) player.getAttributeBaseValue(EntityAttributes.ATTACK_DAMAGE)
+                ? (float) player.getAttributeBaseValue(Attributes.ATTACK_DAMAGE)
                 : getWeaponBaseDamage(player, stack);
         float strengthBonus = isSpear && isUsingThisHand ? getStatusAttackDamageBonus(player) : getManualStatusAttackDamageBonus(player, stack);
         float weaknessPenalty = isSpear && isUsingThisHand ? getStatusAttackDamagePenalty(player) : getManualStatusAttackDamagePenalty(player, stack);
@@ -647,18 +647,18 @@ public class PreDamageHud {
 
         float total = baseDamage + strengthBonus + weaknessPenalty;
 
-        if (stack.isOf(Items.MACE)) {
+        if (stack.is(Items.MACE)) {
             float fallDistance = (float) player.fallDistance;
             breakdown.maceFallDistance = fallDistance;
 
-            if (fallDistance > 1.5f && !player.isGliding()) {
+            if (fallDistance > 1.5f && !player.isFallFlying()) {
                 float smashBonus = (fallDistance <= 3.0f)
                         ? fallDistance * 4.0f
                         : (fallDistance <= 8.0f
                         ? 12.0f + ((fallDistance - 3.0f) * 2.0f)
                         : 22.0f + (fallDistance - 8.0f));
-                var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
-                int density = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.DENSITY), stack);
+                var reg = client.level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
+                int density = EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.DENSITY), stack);
                 smashBonus += density * 0.5f * fallDistance;
                 breakdown.maceFallBonus = smashBonus;
                 total += smashBonus;
@@ -684,20 +684,20 @@ public class PreDamageHud {
         return total;
     }
 
-    private static float getWeaponBaseDamage(PlayerEntity player, ItemStack stack) {
-        double baseAttackDamage = player.getAttributeBaseValue(EntityAttributes.ATTACK_DAMAGE);
+    private static float getWeaponBaseDamage(Player player, ItemStack stack) {
+        double baseAttackDamage = player.getAttributeBaseValue(Attributes.ATTACK_DAMAGE);
         double[] calculatedFromStack = {baseAttackDamage};
 
         // Includes item component modifiers and enchantment-added attribute modifiers.
-        stack.applyAttributeModifiers(EquipmentSlot.MAINHAND, (attribute, modifier) -> {
-            if (!attribute.matches(EntityAttributes.ATTACK_DAMAGE)) return;
+        stack.forEachModifier(EquipmentSlot.MAINHAND, (attribute, modifier) -> {
+            if (!attribute.is(Attributes.ATTACK_DAMAGE)) return;
 
-            if (modifier.operation() == EntityAttributeModifier.Operation.ADD_VALUE) {
-                calculatedFromStack[0] += modifier.value();
-            } else if (modifier.operation() == EntityAttributeModifier.Operation.ADD_MULTIPLIED_BASE) {
-                calculatedFromStack[0] += modifier.value() * baseAttackDamage;
-            } else if (modifier.operation() == EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL) {
-                calculatedFromStack[0] += modifier.value() * calculatedFromStack[0];
+            if (modifier.operation() == AttributeModifier.Operation.ADD_VALUE) {
+                calculatedFromStack[0] += modifier.amount();
+            } else if (modifier.operation() == AttributeModifier.Operation.ADD_MULTIPLIED_BASE) {
+                calculatedFromStack[0] += modifier.amount() * baseAttackDamage;
+            } else if (modifier.operation() == AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL) {
+                calculatedFromStack[0] += modifier.amount() * calculatedFromStack[0];
             }
         });
 
@@ -711,31 +711,31 @@ public class PreDamageHud {
     }
 
     private static float calculateArrowDamageFromVelocity(
-            MinecraftClient client,
+            Minecraft client,
             ItemStack weapon,
             float launchSpeed,
             boolean includeShooterMovement,
             boolean critical,
             DamageBreakdown breakdown
     ) {
-        PlayerEntity player = client.player;
-        Vec3d velocity = player.getRotationVec(1.0f).normalize().multiply(launchSpeed);
+        Player player = client.player;
+        Vec3 velocity = player.getViewVector(1.0f).normalize().scale(launchSpeed);
         if (includeShooterMovement) {
-            Vec3d movement = player.getMovement();
-            velocity = velocity.add(movement.x, player.isOnGround() ? 0.0 : movement.y, movement.z);
+            Vec3 movement = player.getKnownMovement();
+            velocity = velocity.add(movement.x, player.onGround() ? 0.0 : movement.y, movement.z);
         }
 
         float projectileDamage = 2.0f;
         float unenchantedProjectileDamage = projectileDamage;
-        var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
-        int power = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.POWER), weapon);
+        var reg = client.level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
+        int power = EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.POWER), weapon);
         if (power > 0) {
             projectileDamage += 0.5f * power + 0.5f;
             breakdown.enchantmentLevel = Math.max(breakdown.enchantmentLevel, power);
         }
 
-        int baseHit = MathHelper.ceil(MathHelper.clamp((float) velocity.length() * projectileDamage, 0.0f, 2.14748365E9f));
-        int unenchantedHit = MathHelper.ceil(MathHelper.clamp((float) velocity.length() * unenchantedProjectileDamage, 0.0f, 2.14748365E9f));
+        int baseHit = Mth.ceil(Mth.clamp((float) velocity.length() * projectileDamage, 0.0f, 2.14748365E9f));
+        int unenchantedHit = Mth.ceil(Mth.clamp((float) velocity.length() * unenchantedProjectileDamage, 0.0f, 2.14748365E9f));
         float damage = baseHit;
         float unenchantedDamage = unenchantedHit;
         if (critical) {
@@ -752,45 +752,45 @@ public class PreDamageHud {
         return bound <= 1 ? 0.0f : (bound - 1) / 2.0f;
     }
 
-    private static float getManualStatusAttackDamageBonus(PlayerEntity player, ItemStack stack) {
+    private static float getManualStatusAttackDamageBonus(Player player, ItemStack stack) {
         return getStatusAttackDamageBonus(player);
     }
 
-    private static float getManualStatusAttackDamagePenalty(PlayerEntity player, ItemStack stack) {
+    private static float getManualStatusAttackDamagePenalty(Player player, ItemStack stack) {
         return getStatusAttackDamagePenalty(player);
     }
 
-    private static float getStatusAttackDamageBonus(PlayerEntity player) {
-        int strengthLevel = getStatusEffectLevel(player, StatusEffects.STRENGTH);
+    private static float getStatusAttackDamageBonus(Player player) {
+        int strengthLevel = getStatusEffectLevel(player, MobEffects.STRENGTH);
         return strengthLevel > 0 ? 3.0f * strengthLevel : 0.0f;
     }
 
-    private static float getStatusAttackDamagePenalty(PlayerEntity player) {
-        int weaknessLevel = getStatusEffectLevel(player, StatusEffects.WEAKNESS);
+    private static float getStatusAttackDamagePenalty(Player player) {
+        int weaknessLevel = getStatusEffectLevel(player, MobEffects.WEAKNESS);
         return weaknessLevel > 0 ? -4.0f * weaknessLevel : 0.0f;
     }
 
-    private static float calculateSpearVelocityBonus(PlayerEntity player, LivingEntity target, ItemStack stack, DamageBreakdown breakdown) {
-        KineticWeaponComponent kinetic = stack.get(DataComponentTypes.KINETIC_WEAPON);
+    private static float calculateSpearVelocityBonus(Player player, LivingEntity target, ItemStack stack, DamageBreakdown breakdown) {
+        KineticWeapon kinetic = stack.get(DataComponents.KINETIC_WEAPON);
         if (kinetic == null) return 0.0f;
 
-        int useTicks = stack.getMaxUseTime(player) - player.getItemUseTimeLeft();
+        int useTicks = stack.getUseDuration(player) - player.getUseItemRemainingTicks();
         if (useTicks < kinetic.delayTicks()) {
             return 0.0f;
         }
         int activeTicks = useTicks - kinetic.delayTicks();
 
-        Vec3d facing = player.getRotationVec(1.0f);
-        double attackerForwardSpeed = facing.dotProduct(KineticWeaponComponent.getAmplifiedMovement(player));
-        double targetForwardSpeed = facing.dotProduct(KineticWeaponComponent.getAmplifiedMovement(target));
+        Vec3 facing = player.getViewVector(1.0f);
+        double attackerForwardSpeed = facing.dot(KineticWeapon.getMotion(player));
+        double targetForwardSpeed = facing.dot(KineticWeapon.getMotion(target));
         double relativeForwardSpeed = Math.max(0.0, attackerForwardSpeed - targetForwardSpeed);
 
         boolean canDealKineticDamage = kinetic.damageConditions()
-                .map(condition -> condition.isSatisfied(activeTicks, attackerForwardSpeed, relativeForwardSpeed, 1.0))
+                .map(condition -> condition.test(activeTicks, attackerForwardSpeed, relativeForwardSpeed, 1.0))
                 .orElse(true);
 
         // If vanilla condition metadata is missing or mismatched on a custom spear, keep predicting from velocity.
-        if (!canDealKineticDamage && stack.contains(DataComponentTypes.KINETIC_WEAPON)) {
+        if (!canDealKineticDamage && stack.has(DataComponents.KINETIC_WEAPON)) {
             canDealKineticDamage = true;
         }
 
@@ -800,11 +800,11 @@ public class PreDamageHud {
         if (!canDealKineticDamage) {
             return 0.0f;
         }
-        return (float) MathHelper.floor(relativeForwardSpeed * kinetic.damageMultiplier());
+        return (float) Mth.floor(relativeForwardSpeed * kinetic.damageMultiplier());
     }
 
     private static float applyFinalReductions(
-            MinecraftClient client,
+            Minecraft client,
             LivingEntity target,
             ItemStack stack,
             float physicalDamage,
@@ -814,27 +814,27 @@ public class PreDamageHud {
             boolean isHealing,
             DamageBreakdown breakdown
     ) {
-        var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
+        var reg = client.level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
         float enchantBonus = 0.0f;
         int enchantmentLevel = breakdown.enchantmentLevel;
 
-        int sharpness = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.SHARPNESS), stack);
+        int sharpness = EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.SHARPNESS), stack);
         if (sharpness > 0) {
             enchantBonus += 0.5f * sharpness + 0.5f;
             enchantmentLevel = Math.max(enchantmentLevel, sharpness);
         }
-        int smite = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.SMITE), stack);
-        if (smite > 0 && target.getType().isIn(EntityTypeTags.SENSITIVE_TO_SMITE)) {
+        int smite = EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.SMITE), stack);
+        if (smite > 0 && target.getType().builtInRegistryHolder().is(EntityTypeTags.SENSITIVE_TO_SMITE)) {
             enchantBonus += smite * 2.5f;
             enchantmentLevel = Math.max(enchantmentLevel, smite);
         }
-        int bane = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BANE_OF_ARTHROPODS), stack);
-        if (bane > 0 && target.getType().isIn(EntityTypeTags.SENSITIVE_TO_BANE_OF_ARTHROPODS)) {
+        int bane = EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.BANE_OF_ARTHROPODS), stack);
+        if (bane > 0 && target.getType().builtInRegistryHolder().is(EntityTypeTags.SENSITIVE_TO_BANE_OF_ARTHROPODS)) {
             enchantBonus += bane * 2.5f;
             enchantmentLevel = Math.max(enchantmentLevel, bane);
         }
-        int impaling = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.IMPALING), stack);
-        if (impaling > 0 && target.getType().isIn(EntityTypeTags.SENSITIVE_TO_IMPALING)) {
+        int impaling = EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.IMPALING), stack);
+        if (impaling > 0 && target.getType().builtInRegistryHolder().is(EntityTypeTags.SENSITIVE_TO_IMPALING)) {
             enchantBonus += impaling * 2.5f;
             enchantmentLevel = Math.max(enchantmentLevel, impaling);
         }
@@ -842,7 +842,7 @@ public class PreDamageHud {
         breakdown.enchantmentBonus += enchantBonus;
         breakdown.enchantmentLevel = enchantmentLevel;
 
-        int breach = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BREACH), stack);
+        int breach = EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.BREACH), stack);
 
         float armorInput = physicalDamage + enchantBonus;
         DamageProfile physicalProfile = isExplosion ? DamageProfile.EXPLOSION : (isProjectile ? DamageProfile.PROJECTILE : DamageProfile.MELEE);
@@ -880,7 +880,7 @@ public class PreDamageHud {
     }
 
     private static ReductionResult reduceDamage(
-            MinecraftClient client,
+            Minecraft client,
             LivingEntity target,
             float damage,
             DamageProfile profile,
@@ -891,8 +891,8 @@ public class PreDamageHud {
         }
 
         ReductionResult result = new ReductionResult();
-        result.armor = (float) target.getAttributeValue(EntityAttributes.ARMOR);
-        result.toughness = (float) target.getAttributeValue(EntityAttributes.ARMOR_TOUGHNESS);
+        result.armor = (float) target.getAttributeValue(Attributes.ARMOR);
+        result.toughness = (float) target.getAttributeValue(Attributes.ARMOR_TOUGHNESS);
         result.armorInput = damage;
 
         if (profile.bypassesArmor) {
@@ -900,13 +900,13 @@ public class PreDamageHud {
         } else {
             float armorEffectiveness = calculateArmorEffectiveness(damage, result.armor, result.toughness);
             if (breachLevel > 0) {
-                armorEffectiveness = MathHelper.clamp(armorEffectiveness - breachLevel * 0.15f, 0.0f, 1.0f);
+                armorEffectiveness = Mth.clamp(armorEffectiveness - breachLevel * 0.15f, 0.0f, 1.0f);
             }
             result.afterArmor = damage * (1.0f - armorEffectiveness);
         }
         result.armorPenalty = Math.max(0.0f, damage - result.afterArmor);
 
-        if (profile == DamageProfile.MAGIC && target instanceof WitchEntity) {
+        if (profile == DamageProfile.MAGIC && target instanceof Witch) {
             float beforeWitchResistance = result.afterArmor;
             result.afterArmor *= 0.15f;
             result.armorPenalty += Math.max(0.0f, beforeWitchResistance - result.afterArmor);
@@ -914,7 +914,7 @@ public class PreDamageHud {
 
         result.resistanceLevel = getDetectableResistanceLevel(target);
         result.resistanceInferredFromParticles = result.resistanceLevel > 0
-                && getStatusEffectLevel(target, StatusEffects.RESISTANCE) == 0;
+                && getStatusEffectLevel(target, MobEffects.RESISTANCE) == 0;
         result.resistanceMultiplier = result.resistanceLevel > 0
                 ? Math.max(0.0f, 1.0f - result.resistanceLevel * 0.2f)
                 : 1.0f;
@@ -931,49 +931,49 @@ public class PreDamageHud {
 
     private static float calculateArmorEffectiveness(float damage, float armor, float toughness) {
         float toughnessScale = 2.0f + toughness / 4.0f;
-        float armorAfterHit = MathHelper.clamp(armor - damage / toughnessScale, armor * 0.2f, 20.0f);
+        float armorAfterHit = Mth.clamp(armor - damage / toughnessScale, armor * 0.2f, 20.0f);
         return armorAfterHit / 25.0f;
     }
 
-    private static int getProtectionAmount(MinecraftClient client, LivingEntity target, DamageProfile profile) {
+    private static int getProtectionAmount(Minecraft client, LivingEntity target, DamageProfile profile) {
         int epf = 0;
-        var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
+        var reg = client.level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
         for (EquipmentSlot slot : new EquipmentSlot[]{EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
-            ItemStack armorPiece = target.getEquippedStack(slot);
+            ItemStack armorPiece = target.getItemBySlot(slot);
             if (armorPiece.isEmpty()) continue;
 
-            epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PROTECTION), armorPiece);
+            epf += EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.PROTECTION), armorPiece);
             if (profile == DamageProfile.PROJECTILE) {
-                epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.PROJECTILE_PROTECTION), armorPiece) * 2;
+                epf += EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.PROJECTILE_PROTECTION), armorPiece) * 2;
             } else if (profile == DamageProfile.EXPLOSION) {
-                epf += EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.BLAST_PROTECTION), armorPiece) * 2;
+                epf += EnchantmentHelper.getItemEnchantmentLevel(reg.getOrThrow(Enchantments.BLAST_PROTECTION), armorPiece) * 2;
             }
         }
         return epf;
     }
 
-    private static PotionResult calculatePotionResult(MinecraftClient client, LivingEntity target, ItemStack stack, boolean lingering) {
+    private static PotionResult calculatePotionResult(Minecraft client, LivingEntity target, ItemStack stack, boolean lingering) {
         PotionResult result = new PotionResult();
-        var contents = stack.get(DataComponentTypes.POTION_CONTENTS);
+        var contents = stack.get(DataComponents.POTION_CONTENTS);
         if (contents == null) return result;
 
-        boolean undead = target.hasInvertedHealingAndHarm();
+        boolean undead = target.isInvertedHealAndHarm();
         boolean immuneToPoison = undead
-                || target instanceof EnderDragonEntity
-                || target instanceof WitherEntity
+                || target instanceof EnderDragon
+                || target instanceof WitherBoss
                 || target.getType().equals(EntityType.SPIDER)
                 || target.getType().equals(EntityType.CAVE_SPIDER)
                 || target.getType().equals(EntityType.BOGGED);
-        var effects = contents.getEffects();
+        var effects = contents.getAllEffects();
 
-        for (StatusEffectInstance effect : effects) {
-            boolean isHeal = effect.getEffectType().equals(StatusEffects.INSTANT_HEALTH);
-            boolean isHarm = effect.getEffectType().equals(StatusEffects.INSTANT_DAMAGE);
-            boolean isPoison = effect.getEffectType().equals(StatusEffects.POISON);
-            boolean isRegen = effect.getEffectType().equals(StatusEffects.REGENERATION);
+        for (MobEffectInstance effect : effects) {
+            boolean isHeal = effect.getEffect().equals(MobEffects.INSTANT_HEALTH);
+            boolean isHarm = effect.getEffect().equals(MobEffects.INSTANT_DAMAGE);
+            boolean isPoison = effect.getEffect().equals(MobEffects.POISON);
+            boolean isRegen = effect.getEffect().equals(MobEffects.REGENERATION);
             String heartText = effect.getAmplifier() > 0 ? "💕" : "❤";
 
-            if (target instanceof EndermanEntity && isHarm) {
+            if (target instanceof EnderMan && isHarm) {
                 result.value = 0.0f;
                 continue;
             }
@@ -986,7 +986,7 @@ public class PreDamageHud {
                 continue;
             }
             if (isRegen) {
-                if (!undead && !(target instanceof EnderDragonEntity)) {
+                if (!undead && !(target instanceof EnderDragon)) {
                     result.overrideText = "+" + heartText;
                     result.color = colorOrDefault(ModConfig.healingColor, 0xFF00FF00);
                 }
@@ -1016,32 +1016,32 @@ public class PreDamageHud {
         return result;
     }
 
-    private static float calculateFireworkExplosionDamage(MinecraftClient client, LivingEntity target, ItemStack crossbow, Vec3d explosionPos) {
-        ChargedProjectilesComponent charged = crossbow.get(DataComponentTypes.CHARGED_PROJECTILES);
+    private static float calculateFireworkExplosionDamage(Minecraft client, LivingEntity target, ItemStack crossbow, Vec3 explosionPos) {
+        ChargedProjectiles charged = crossbow.get(DataComponents.CHARGED_PROJECTILES);
         if (charged == null || charged.isEmpty()) return 0.0f;
 
-        ItemStack projectile = charged.getProjectiles().get(0);
-        if (!projectile.isOf(Items.FIREWORK_ROCKET)) return 0.0f;
+        ItemStack projectile = charged.itemCopies().get(0);
+        if (!projectile.is(Items.FIREWORK_ROCKET)) return 0.0f;
 
-        FireworksComponent fireworks = projectile.get(DataComponentTypes.FIREWORKS);
+        Fireworks fireworks = projectile.get(DataComponents.FIREWORKS);
         if (fireworks == null || fireworks.explosions().isEmpty()) return 0.0f;
         if (!hasFireworkExposure(client, target, explosionPos)) return 0.0f;
 
         float baseDamage = 5.0f + fireworks.explosions().size() * 2.0f;
-        double distance = explosionPos.distanceTo(target.getEntityPos());
+        double distance = explosionPos.distanceTo(target.position());
         if (distance > 5.0) return 0.0f;
-        return baseDamage * MathHelper.sqrt((float) ((5.0 - distance) / 5.0));
+        return baseDamage * Mth.sqrt((float) ((5.0 - distance) / 5.0));
     }
 
-    private static boolean hasFireworkExposure(MinecraftClient client, LivingEntity target, Vec3d explosionPos) {
-        if (client.world == null || client.player == null) return false;
+    private static boolean hasFireworkExposure(Minecraft client, LivingEntity target, Vec3 explosionPos) {
+        if (client.level == null || client.player == null) return false;
         for (int i = 0; i < 2; i++) {
-            Vec3d targetPos = new Vec3d(target.getX(), target.getBodyY(0.5 * i), target.getZ());
-            HitResult hit = client.world.raycast(new RaycastContext(
+            Vec3 targetPos = new Vec3(target.getX(), target.getY(0.5 * i), target.getZ());
+            HitResult hit = client.level.clip(new ClipContext(
                     explosionPos,
                     targetPos,
-                    RaycastContext.ShapeType.COLLIDER,
-                    RaycastContext.FluidHandling.NONE,
+                    ClipContext.Block.COLLIDER,
+                    ClipContext.Fluid.NONE,
                     client.player
             ));
             if (hit.getType() == HitResult.Type.MISS) {
@@ -1053,19 +1053,19 @@ public class PreDamageHud {
 
     private static boolean isDeflectedProjectileTarget(LivingEntity target, boolean isDeflectableProjectile) {
         if (!isDeflectableProjectile) return false;
-        if (target.getType().isIn(EntityTypeTags.DEFLECTS_PROJECTILES)) {
+        if (target.getType().builtInRegistryHolder().is(EntityTypeTags.DEFLECTS_PROJECTILES)) {
             return true;
         }
         return false;
     }
 
-    private static int getStatusEffectLevel(LivingEntity target, RegistryEntry<StatusEffect> effect) {
-        StatusEffectInstance direct = target.getStatusEffect(effect);
+    private static int getStatusEffectLevel(LivingEntity target, Holder<MobEffect> effect) {
+        MobEffectInstance direct = target.getEffect(effect);
         if (direct != null) {
             return direct.getAmplifier() + 1;
         }
-        for (StatusEffectInstance instance : target.getStatusEffects()) {
-            if (instance.getEffectType().matches(effect)) {
+        for (MobEffectInstance instance : target.getActiveEffects()) {
+            if (instance.getEffect().is(effect)) {
                 return instance.getAmplifier() + 1;
             }
         }
@@ -1073,19 +1073,19 @@ public class PreDamageHud {
     }
 
     private static int getDetectableResistanceLevel(LivingEntity target) {
-        int directLevel = getStatusEffectLevel(target, StatusEffects.RESISTANCE);
+        int directLevel = getStatusEffectLevel(target, MobEffects.RESISTANCE);
         if (directLevel > 0) {
             return directLevel;
         }
-        return hasStatusEffectParticle(target, StatusEffects.RESISTANCE) ? PARTICLE_INFERRED_RESISTANCE_LEVEL : 0;
+        return hasStatusEffectParticle(target, MobEffects.RESISTANCE) ? PARTICLE_INFERRED_RESISTANCE_LEVEL : 0;
     }
 
-    private static boolean hasStatusEffectParticle(LivingEntity target, RegistryEntry<StatusEffect> effect) {
+    private static boolean hasStatusEffectParticle(LivingEntity target, Holder<MobEffect> effect) {
         try {
-            List<ParticleEffect> particles = target.getDataTracker().get(LivingEntityAccessor.predamage$getPotionSwirls());
+            List<ParticleOptions> particles = target.getEntityData().get(LivingEntityAccessor.predamage$getPotionSwirls());
             int expectedRgb = effect.value().getColor() & 0x00FFFFFF;
-            for (ParticleEffect particle : particles) {
-                if (particle instanceof TintedParticleEffect tinted && colorDistanceSquared(toRgb(tinted), expectedRgb) <= 9) {
+            for (ParticleOptions particle : particles) {
+                if (particle instanceof ColorParticleOption tinted && colorDistanceSquared(toRgb(tinted), expectedRgb) <= 9) {
                     return true;
                 }
             }
@@ -1095,10 +1095,10 @@ public class PreDamageHud {
         return false;
     }
 
-    private static int toRgb(TintedParticleEffect particle) {
-        int red = MathHelper.clamp(Math.round(particle.getRed() * 255.0f), 0, 255);
-        int green = MathHelper.clamp(Math.round(particle.getGreen() * 255.0f), 0, 255);
-        int blue = MathHelper.clamp(Math.round(particle.getBlue() * 255.0f), 0, 255);
+    private static int toRgb(ColorParticleOption particle) {
+        int red = Mth.clamp(Math.round(particle.getRed() * 255.0f), 0, 255);
+        int green = Mth.clamp(Math.round(particle.getGreen() * 255.0f), 0, 255);
+        int blue = Mth.clamp(Math.round(particle.getBlue() * 255.0f), 0, 255);
         return (red << 16) | (green << 8) | blue;
     }
 
@@ -1111,13 +1111,13 @@ public class PreDamageHud {
 
     private static boolean isBlockedByShield(Entity attacker, LivingEntity target) {
         if (!target.isBlocking()) return false;
-        Vec3d fromTargetToAttacker = attacker.getEntityPos().subtract(target.getEntityPos());
-        Vec3d horizontalDirection = new Vec3d(fromTargetToAttacker.x, 0.0, fromTargetToAttacker.z);
-        if (horizontalDirection.lengthSquared() <= 1.0E-6) {
+        Vec3 fromTargetToAttacker = attacker.position().subtract(target.position());
+        Vec3 horizontalDirection = new Vec3(fromTargetToAttacker.x, 0.0, fromTargetToAttacker.z);
+        if (horizontalDirection.lengthSqr() <= 1.0E-6) {
             return false;
         }
-        Vec3d lookDirection = target.getRotationVector(0.0f, target.getHeadYaw());
-        return horizontalDirection.normalize().dotProduct(lookDirection) > 0.0;
+        Vec3 lookDirection = target.calculateViewVector(0.0f, target.getYHeadRot());
+        return horizontalDirection.normalize().dot(lookDirection) > 0.0;
     }
 
     private static float calculateInteractionHealing(LivingEntity target, ItemStack stack) {
@@ -1125,89 +1125,89 @@ public class PreDamageHud {
             return 0.0f;
         }
 
-        if (target instanceof IronGolemEntity && stack.isOf(Items.IRON_INGOT)) {
+        if (target instanceof IronGolem && stack.is(Items.IRON_INGOT)) {
             return 25.0f;
         }
 
-        if (target instanceof WolfEntity wolf && wolf.isTamed() && stack.isIn(ItemTags.WOLF_FOOD)) {
+        if (target instanceof Wolf wolf && wolf.isTame() && stack.is(ItemTags.WOLF_FOOD)) {
             return 2.0f * getFoodNutritionOrDefault(stack, 1.0f);
         }
 
-        if (target instanceof CatEntity cat && cat.isTamed() && stack.isIn(ItemTags.CAT_FOOD)) {
+        if (target instanceof Cat cat && cat.isTame() && stack.is(ItemTags.CAT_FOOD)) {
             return getFoodNutritionOrDefault(stack, 1.0f);
         }
 
-        if (target instanceof CamelEntity && stack.isIn(ItemTags.CAMEL_FOOD)) {
+        if (target instanceof Camel && stack.is(ItemTags.CAMEL_FOOD)) {
             return 2.0f;
         }
 
-        if (target instanceof LlamaEntity) {
-            if (!stack.isIn(ItemTags.LLAMA_FOOD)) return 0.0f;
-            if (stack.isOf(Items.WHEAT)) return 2.0f;
-            if (stack.isOf(Blocks.HAY_BLOCK.asItem())) return 10.0f;
+        if (target instanceof Llama) {
+            if (!stack.is(ItemTags.LLAMA_FOOD)) return 0.0f;
+            if (stack.is(Items.WHEAT)) return 2.0f;
+            if (stack.is(Blocks.HAY_BLOCK.asItem())) return 10.0f;
             return 0.0f;
         }
 
-        if (target instanceof AbstractNautilusEntity nautilus) {
-            boolean isHealingFood = nautilus.isBaby() || nautilus.isTamed()
-                    ? stack.isIn(ItemTags.NAUTILUS_FOOD)
-                    : stack.isIn(ItemTags.NAUTILUS_TAMING_ITEMS);
+        if (target instanceof AbstractNautilus nautilus) {
+            boolean isHealingFood = nautilus.isBaby() || nautilus.isTame()
+                    ? stack.is(ItemTags.NAUTILUS_FOOD)
+                    : stack.is(ItemTags.NAUTILUS_TAMING_ITEMS);
             if (!isHealingFood) return 0.0f;
             return 2.0f * getFoodNutritionOrDefault(stack, 0.5f);
         }
 
-        if (target instanceof AbstractHorseEntity && stack.isIn(ItemTags.HORSE_FOOD)) {
-            if (stack.isOf(Items.WHEAT)) return 2.0f;
-            if (stack.isOf(Items.SUGAR)) return 1.0f;
-            if (stack.isOf(Blocks.HAY_BLOCK.asItem())) return 20.0f;
-            if (stack.isOf(Items.APPLE)) return 3.0f;
-            if (stack.isOf(Items.RED_MUSHROOM)) return 3.0f;
-            if (stack.isOf(Items.CARROT)) return 3.0f;
-            if (stack.isOf(Items.GOLDEN_CARROT)) return 4.0f;
-            if (stack.isOf(Items.GOLDEN_APPLE) || stack.isOf(Items.ENCHANTED_GOLDEN_APPLE)) return 10.0f;
+        if (target instanceof AbstractHorse && stack.is(ItemTags.HORSE_FOOD)) {
+            if (stack.is(Items.WHEAT)) return 2.0f;
+            if (stack.is(Items.SUGAR)) return 1.0f;
+            if (stack.is(Blocks.HAY_BLOCK.asItem())) return 20.0f;
+            if (stack.is(Items.APPLE)) return 3.0f;
+            if (stack.is(Items.RED_MUSHROOM)) return 3.0f;
+            if (stack.is(Items.CARROT)) return 3.0f;
+            if (stack.is(Items.GOLDEN_CARROT)) return 4.0f;
+            if (stack.is(Items.GOLDEN_APPLE) || stack.is(Items.ENCHANTED_GOLDEN_APPLE)) return 10.0f;
         }
 
         return 0.0f;
     }
 
     private static float getFoodNutritionOrDefault(ItemStack stack, float fallback) {
-        if (stack.contains(DataComponentTypes.FOOD) && stack.get(DataComponentTypes.FOOD) != null) {
-            return stack.get(DataComponentTypes.FOOD).nutrition();
+        if (stack.has(DataComponents.FOOD) && stack.get(DataComponents.FOOD) != null) {
+            return stack.get(DataComponents.FOOD).nutrition();
         }
         return fallback;
     }
 
     private static boolean isPotentialInteractionHealingItem(ItemStack stack) {
-        return stack.isOf(Items.IRON_INGOT)
-                || stack.isIn(ItemTags.WOLF_FOOD)
-                || stack.isIn(ItemTags.CAT_FOOD)
-                || stack.isIn(ItemTags.CAMEL_FOOD)
-                || stack.isIn(ItemTags.LLAMA_FOOD)
-                || stack.isIn(ItemTags.HORSE_FOOD)
-                || stack.isIn(ItemTags.NAUTILUS_FOOD)
-                || stack.isIn(ItemTags.NAUTILUS_TAMING_ITEMS);
+        return stack.is(Items.IRON_INGOT)
+                || stack.is(ItemTags.WOLF_FOOD)
+                || stack.is(ItemTags.CAT_FOOD)
+                || stack.is(ItemTags.CAMEL_FOOD)
+                || stack.is(ItemTags.LLAMA_FOOD)
+                || stack.is(ItemTags.HORSE_FOOD)
+                || stack.is(ItemTags.NAUTILUS_FOOD)
+                || stack.is(ItemTags.NAUTILUS_TAMING_ITEMS);
     }
 
-    private static MagicEffectResult calculateArrowInstantEffect(LivingEntity target, ItemStack weapon, PlayerEntity player, boolean active, float normalArrowDamage) {
+    private static MagicEffectResult calculateArrowInstantEffect(LivingEntity target, ItemStack weapon, Player player, boolean active, float normalArrowDamage) {
         MagicEffectResult result = new MagicEffectResult();
         if (!active) return result;
 
-        ItemStack projectile = weapon.isOf(Items.BOW)
-                ? player.getProjectileType(weapon)
-                : (weapon.get(DataComponentTypes.CHARGED_PROJECTILES) != null && !weapon.get(DataComponentTypes.CHARGED_PROJECTILES).isEmpty()
-                ? weapon.get(DataComponentTypes.CHARGED_PROJECTILES).getProjectiles().get(0)
+        ItemStack projectile = weapon.is(Items.BOW)
+                ? player.getProjectile(weapon)
+                : (weapon.get(DataComponents.CHARGED_PROJECTILES) != null && !weapon.get(DataComponents.CHARGED_PROJECTILES).isEmpty()
+                ? weapon.get(DataComponents.CHARGED_PROJECTILES).itemCopies().get(0)
                 : ItemStack.EMPTY);
-        if (projectile.isEmpty() || !projectile.contains(DataComponentTypes.POTION_CONTENTS)) return result;
+        if (projectile.isEmpty() || !projectile.has(DataComponents.POTION_CONTENTS)) return result;
 
-        boolean inverted = target.hasInvertedHealingAndHarm();
-        for (StatusEffectInstance effect : projectile.get(DataComponentTypes.POTION_CONTENTS).getEffects()) {
-            if (effect.getEffectType().equals(StatusEffects.INSTANT_HEALTH)) {
+        boolean inverted = target.isInvertedHealAndHarm();
+        for (MobEffectInstance effect : projectile.get(DataComponents.POTION_CONTENTS).getAllEffects()) {
+            if (effect.getEffect().equals(MobEffects.INSTANT_HEALTH)) {
                 if (inverted) {
                     result.damage += getInstantArrowExtraDamage(effect, normalArrowDamage);
                 } else {
                     result.healing += getInstantHealAmount(effect.getAmplifier());
                 }
-            } else if (effect.getEffectType().equals(StatusEffects.INSTANT_DAMAGE)) {
+            } else if (effect.getEffect().equals(MobEffects.INSTANT_DAMAGE)) {
                 if (inverted) {
                     result.healing += getInstantHealAmount(effect.getAmplifier());
                 } else {
@@ -1218,7 +1218,7 @@ public class PreDamageHud {
         return result;
     }
 
-    private static float getInstantArrowExtraDamage(StatusEffectInstance effect, float normalArrowDamage) {
+    private static float getInstantArrowExtraDamage(MobEffectInstance effect, float normalArrowDamage) {
         return Math.max(0.0f, getInstantDamageAmount(effect.getAmplifier()) - normalArrowDamage);
     }
 
@@ -1231,18 +1231,18 @@ public class PreDamageHud {
     }
 
     private static boolean hasExplosiveFirework(ItemStack stack) {
-        ChargedProjectilesComponent charged = stack.get(DataComponentTypes.CHARGED_PROJECTILES);
+        ChargedProjectiles charged = stack.get(DataComponents.CHARGED_PROJECTILES);
         return charged != null
                 && !charged.isEmpty()
-                && charged.getProjectiles().get(0).isOf(Items.FIREWORK_ROCKET)
-                && charged.getProjectiles().get(0).contains(DataComponentTypes.FIREWORKS)
-                && !charged.getProjectiles().get(0).get(DataComponentTypes.FIREWORKS).explosions().isEmpty();
+                && charged.itemCopies().get(0).is(Items.FIREWORK_ROCKET)
+                && charged.itemCopies().get(0).has(DataComponents.FIREWORKS)
+                && !charged.itemCopies().get(0).get(DataComponents.FIREWORKS).explosions().isEmpty();
     }
 
     private static int getColor(LivingEntity target, float damage, ItemStack stack, boolean healing) {
         if (healing) return colorOrDefault(ModConfig.healingColor, 0xFF00FF00);
         float health = target.getHealth() + target.getAbsorptionAmount();
-        if (stack.isOf(Items.SPLASH_POTION) || stack.isOf(Items.LINGERING_POTION)) {
+        if (stack.is(Items.SPLASH_POTION) || stack.is(Items.LINGERING_POTION)) {
             return colorOrDefault(ModConfig.damagePotionColor, 0xFF990000);
         }
         return damage >= health
@@ -1257,12 +1257,12 @@ public class PreDamageHud {
     }
 
     private static boolean isEnemyHoldingTotem(LivingEntity entity) {
-        return entity.getEquippedStack(EquipmentSlot.MAINHAND).isOf(Items.TOTEM_OF_UNDYING)
-                || entity.getEquippedStack(EquipmentSlot.OFFHAND).isOf(Items.TOTEM_OF_UNDYING);
+        return entity.getItemBySlot(EquipmentSlot.MAINHAND).is(Items.TOTEM_OF_UNDYING)
+                || entity.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.TOTEM_OF_UNDYING);
     }
 
     private static int applyConfiguredColor(int color) {
-        int alpha = MathHelper.clamp(ModConfig.opacity, 0, 255);
+        int alpha = Mth.clamp(ModConfig.opacity, 0, 255);
         int rgb = color & 0x00FFFFFF;
         if ((rgb == 0x00FFFFFF) && ModConfig.indicatorColor != null) {
             rgb = ModConfig.indicatorColor.getRGB() & 0x00FFFFFF;
@@ -1270,7 +1270,7 @@ public class PreDamageHud {
         return (alpha << 24) | rgb;
     }
 
-    private static void renderIndicator(DrawContext ctx, MinecraftClient client, float damage, int color, boolean isMain, String suffix, boolean isHealing) {
+    private static void renderIndicator(GuiGraphicsExtractor ctx, Minecraft client, float damage, int color, boolean isMain, String suffix, boolean isHealing) {
         if (!suffix.equals("X") && damage < 0.1f) return;
         String valueText = suffix.equals("X")
                 ? "X"
@@ -1278,16 +1278,16 @@ public class PreDamageHud {
         renderString(ctx, client, valueText, color, isMain);
     }
 
-    private static void renderString(DrawContext ctx, MinecraftClient client, String text, int color, boolean isMain) {
-        int centerX = client.getWindow().getScaledWidth() / 2;
-        int centerY = (client.getWindow().getScaledHeight() / 2) - 4;
-        int x = isMain ? centerX + 15 : centerX - 15 - client.textRenderer.getWidth(text);
-        ctx.drawTextWithShadow(client.textRenderer, text, x, centerY, color);
+    private static void renderString(GuiGraphicsExtractor ctx, Minecraft client, String text, int color, boolean isMain) {
+        int centerX = ctx.guiWidth() / 2;
+        int centerY = (ctx.guiHeight() / 2) - 4;
+        int x = isMain ? centerX + 15 : centerX - 15 - client.font.width(text);
+        ctx.text(client.font, text, x, centerY, color);
     }
 
     private static void renderDebugPanel(
-            DrawContext ctx,
-            MinecraftClient client,
+            GuiGraphicsExtractor ctx,
+            Minecraft client,
             ItemStack stack,
             Entity target,
             DamageBreakdown breakdown,
@@ -1311,8 +1311,8 @@ public class PreDamageHud {
 
         drawDebugLine(ctx, client, x, y, "B4's Pre-Damage Indicator Debug Mode [F7]", 0xFFFFFFFF);
         y += 10;
-        y = drawDebugLineIf(ctx, client, x, y, "Item: " + stack.getName().getString(), neutralColor, ModConfig.debugShowItem);
-        String targetType = target == null ? "none" : String.valueOf(Registries.ENTITY_TYPE.getId(target.getType()));
+        y = drawDebugLineIf(ctx, client, x, y, "Item: " + stack.getHoverName().getString(), neutralColor, ModConfig.debugShowItem);
+        String targetType = target == null ? "none" : String.valueOf(BuiltInRegistries.ENTITY_TYPE.getKey(target.getType()));
         y = drawDebugLineIf(ctx, client, x, y, "Target: " + targetType, neutralColor, ModConfig.debugShowTarget);
         if (target instanceof LivingEntity livingTarget) {
             y = drawDebugLineIf(
@@ -1347,7 +1347,7 @@ public class PreDamageHud {
                 neutralColor,
                 ModConfig.debugShowSpear
         );
-        y = drawDebugLineIf(ctx, client, x, y, String.format(Locale.ROOT, "Is Mace: %s  fallDist: %.2f  Bonus: %s", stack.isOf(Items.MACE), breakdown.maceFallDistance, formatSignedValue(breakdown.maceFallBonus)), neutralColor, ModConfig.debugShowMace);
+        y = drawDebugLineIf(ctx, client, x, y, String.format(Locale.ROOT, "Is Mace: %s  fallDist: %.2f  Bonus: %s", stack.is(Items.MACE), breakdown.maceFallDistance, formatSignedValue(breakdown.maceFallBonus)), neutralColor, ModConfig.debugShowMace);
         y = drawDebugLineIf(ctx, client, x, y, "Is offhand: " + !isMain + "  type: " + damageType + "  Is using: " + isUsingThisHand, neutralColor, ModConfig.debugShowState);
         y = drawDebugLineIf(ctx, client, x, y, String.format(Locale.ROOT, "Final Input/Initial Output: %.2f", breakdown.initialOutput), inputOutputColor, ModConfig.debugShowReductions);
         y = drawDebugLineIf(
@@ -1411,7 +1411,7 @@ public class PreDamageHud {
         drawDebugLineIf(ctx, client, x, y, "Cooldown: " + breakdown.cooldownWarning + "  HurtWindow: " + breakdown.hurtWindowWarning, warningColor, ModConfig.debugShowWarnings);
     }
 
-    private static int drawDebugLineIf(DrawContext ctx, MinecraftClient client, int x, int y, String text, int color, boolean show) {
+    private static int drawDebugLineIf(GuiGraphicsExtractor ctx, Minecraft client, int x, int y, String text, int color, boolean show) {
         if (show) {
             drawDebugLine(ctx, client, x, y, text, color);
             return y + 10;
@@ -1419,15 +1419,15 @@ public class PreDamageHud {
         return y;
     }
 
-    private static void drawDebugLine(DrawContext ctx, MinecraftClient client, int x, int y, String text, int color) {
-        ctx.drawTextWithShadow(client.textRenderer, text, x, y, color);
+    private static void drawDebugLine(GuiGraphicsExtractor ctx, Minecraft client, int x, int y, String text, int color) {
+        ctx.text(client.font, text, x, y, color);
     }
 
-    private static void drawDebugSegments(DrawContext ctx, MinecraftClient client, int x, int y, DebugSegment... segments) {
+    private static void drawDebugSegments(GuiGraphicsExtractor ctx, Minecraft client, int x, int y, DebugSegment... segments) {
         int cursorX = x;
         for (DebugSegment segment : segments) {
-            ctx.drawTextWithShadow(client.textRenderer, segment.text, cursorX, y, segment.color);
-            cursorX += client.textRenderer.getWidth(segment.text);
+            ctx.text(client.font, segment.text, cursorX, y, segment.color);
+            cursorX += client.font.width(segment.text);
         }
     }
 
@@ -1435,8 +1435,8 @@ public class PreDamageHud {
         return String.format(Locale.ROOT, "%+.2f", value);
     }
 
-    private static String buildMainWeaponKey(PlayerEntity player, ItemStack stack) {
-        return player.getInventory().getSelectedSlot() + ":" + Registries.ITEM.getId(stack.getItem());
+    private static String buildMainWeaponKey(Player player, ItemStack stack) {
+        return player.getInventory().getSelectedSlot() + ":" + BuiltInRegistries.ITEM.getKey(stack.getItem());
     }
 
     private static void resetMainSmoothingState() {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "b4_pre-damage_indicator",
-  "version": "1.2-snapshot 6",
+  "version": "${version}",
   "name": "B4's Pre-Damage indicator",
   "description": "The first pre-damage indicator to Minecraft!",
   "authors": ["imB4"],
@@ -28,10 +28,9 @@
     "b4_pre-damage_indicator.mixins.json"
   ],
   "depends": {
-    "fabricloader": ">=0.18.4",
+    "fabricloader": ">=${loader_version}",
     "fabric-api": "*",
-    "minecraft": "~1.21.11",
-    "yet_another_config_lib_v3": "*"
+    "minecraft": "${minecraft_version_range}"
   },
   "suggests": {
     "modmenu": "*"

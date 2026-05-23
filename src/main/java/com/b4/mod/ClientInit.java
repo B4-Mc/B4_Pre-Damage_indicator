@@ -2,20 +2,21 @@ package com.b4.mod;
 
 import com.b4.predamage.client.PreDamageHud;
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.minecraft.client.MinecraftClient;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.minecraft.client.Minecraft;
+import net.minecraft.resources.Identifier;
 
 public class ClientInit implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         System.out.println(">>> CLIENT INIT IS RUNNING! <<<");
 
-        HudRenderCallback.EVENT.register((drawContext, tickDelta) -> {
-            MinecraftClient client = MinecraftClient.getInstance();
+        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("b4_pre-damage_indicator", "indicator"), (drawContext, tickDelta) -> {
+            Minecraft client = Minecraft.getInstance();
             if (client.player == null) return;
 
-            PreDamageHud.processHand(client, drawContext, client.player.getMainHandStack(), true);
-            PreDamageHud.processHand(client, drawContext, client.player.getOffHandStack(), false);
+            PreDamageHud.processHand(client, drawContext, client.player.getMainHandItem(), true);
+            PreDamageHud.processHand(client, drawContext, client.player.getOffhandItem(), false);
         });
     }
 }

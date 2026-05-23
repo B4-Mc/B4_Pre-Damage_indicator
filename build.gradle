@@ -1,7 +1,24 @@
-plugins {
-    id 'fabric-loom' version '1.14-SNAPSHOT'
-    id 'maven-publish'
+buildscript {
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+            metadataSources {
+                mavenPom()
+                artifact()
+                ignoreGradleMetadataRedirection()
+            }
+        }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    dependencies {
+        classpath "net.fabricmc:fabric-loom:1.16.2"
+    }
 }
+
+apply plugin: 'fabric-loom'
+apply plugin: 'maven-publish'
 
 version = project.mod_version
 group = project.maven_group
@@ -11,10 +28,16 @@ base {
 }
 
 loom {
-
     mods {
         "b4_pre-damage_indicator" {
             sourceSet sourceSets.main
+        }
+    }
+
+    runs {
+        configureEach {
+            property "fabric.runtimeMappingNamespace", "named"
+            property "fabric.defaultModDistributionNamespace", "named"
         }
     }
 }
@@ -35,28 +58,59 @@ repositories {
 
 dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    mappings files("mappings/identity-0.0.0.jar")
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-    modApi "com.terraformersmc:modmenu:17.0.0-beta.2"
-    modApi "dev.isxander:yet-another-config-lib:3.8.2+1.21.11-fabric"
+    modApi "com.terraformersmc:modmenu:${project.modmenu_version}"
 }
 
 processResources {
     inputs.property "version", project.version
     inputs.property "minecraft_version", project.minecraft_version
+    inputs.property "minecraft_version_range", project.minecraft_version_range
     inputs.property "loader_version", project.loader_version
     filteringCharset "UTF-8"
 
     filesMatching("fabric.mod.json") {
         expand "version": project.version,
                 "minecraft_version": project.minecraft_version,
+                "minecraft_version_range": project.minecraft_version_range,
                 "loader_version": project.loader_version
     }
 }
 
-def targetJavaVersion = 21
+tasks.named("generateDLIConfig").configure {
+    doLast {
+        def launchConfig = file(".gradle/loom-cache/launch.cfg")
+        if (launchConfig.exists()) {
+            def text = launchConfig.text
+            text = text.replace(
+                    "fabric.defaultModDistributionNamespace=official",
+                    "fabric.defaultModDistributionNamespace=named"
+            )
+            if (!text.contains("fabric.runtimeMappingNamespace=")) {
+                text = text.replace(
+                        "\tfabric.development=true",
+                        "\tfabric.development=true${System.lineSeparator()}\tfabric.runtimeMappingNamespace=named"
+                )
+            } else {
+                text = text.replace(
+                        "fabric.runtimeMappingNamespace=official",
+                        "fabric.runtimeMappingNamespace=named"
+                )
+            }
+            launchConfig.text = text
+        }
+    }
+}
+
+tasks.withType(JavaExec).configureEach {
+    systemProperty "fabric.runtimeMappingNamespace", "named"
+    systemProperty "fabric.defaultModDistributionNamespace", "named"
+}
+
+def targetJavaVersion = 25
 tasks.withType(JavaCompile).configureEach {
     it.options.encoding = "UTF-8"
     if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
