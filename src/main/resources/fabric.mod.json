@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "b4_pre-damage_indicator",
-  "version": "1.2-snapshot 6",
+  "version": "1.2-snapshot 6+1.21.11",
   "name": "B4's Pre-Damage indicator",
   "description": "The first pre-damage indicator to Minecraft!",
   "authors": ["imB4"],
