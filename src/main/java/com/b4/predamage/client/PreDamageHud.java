@@ -1,9 +1,9 @@
 package com.b4.predamage.client;
 
 import com.b4.predamage.ModConfig;
-import com.b4.predamage.mixin.LivingEntityAccessor;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ChargedProjectilesComponent;
@@ -34,13 +34,12 @@ import net.minecraft.entity.passive.CatEntity;
 import net.minecraft.entity.passive.IronGolemEntity;
 import net.minecraft.entity.passive.LlamaEntity;
 import net.minecraft.entity.passive.WolfEntity;
+import net.minecraft.entity.passive.ArmadilloEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.ProjectileUtil;
 import net.minecraft.item.CrossbowItem;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.particle.ParticleEffect;
-import net.minecraft.particle.TintedParticleEffect;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.entry.RegistryEntry;
@@ -55,21 +54,23 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
+import net.minecraft.world.GameMode;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Comparator;
-import java.util.List;
 import java.util.Locale;
 
 public class PreDamageHud {
     private static final int IMMUNE_COLOR = 0xFF0000AA;
-    private static final int PARTICLE_INFERRED_RESISTANCE_LEVEL = 4;
 
     private static float mainDisplayed = 0.0f;
     private static float offDisplayed = 0.0f;
     private static float mainTarget = 0.0f;
     private static boolean wasCritMain = false;
     private static boolean wasCritOff = false;
+
+    // Smash lifecycle tracker (vanilla-mirrored)
+    private static final SmashState SMASH_STATE = new SmashState();
 
     private static boolean debugMenuEnabled = false;
     private static boolean debugKeyHeld = false;
@@ -78,8 +79,27 @@ public class PreDamageHud {
     private static long mainLastTargetTimestampMs = 0L;
     private static String mainLastWeaponKey = "";
 
+    public static void onEntityAttack(PlayerEntity player, Hand hand, Entity target) {
+        if (player == null || target == null || hand != Hand.MAIN_HAND) return;
+        ItemStack stack = player.getStackInHand(hand);
+        if (!stack.isOf(Items.MACE)) return;
+
+        SMASH_STATE.tick(player);
+        if (SMASH_STATE.consumeSmash(player)) {
+            resetMainSmoothingState();
+        }
+    }
+
     public static void processHand(MinecraftClient client, DrawContext ctx, ItemStack stack, boolean isMain) {
-        if (client.player == null || client.world == null) return;
+        if (client.player == null || client.world == null) {
+            if (isMain) {
+                SMASH_STATE.reset();
+            }
+            return;
+        }
+        if (isMain) {
+            SMASH_STATE.tick(client);
+        }
         if (!ModConfig.modEnabled) return;
 
         debugMenuEnabled = ModConfig.debugOverlayEnabled;
@@ -129,9 +149,9 @@ public class PreDamageHud {
         ReachProfile reachProfile = getReachProfile(client, stack, isSpear, isUsingThisHand);
         Entity rawHit = getTarget(client, reachProfile);
 
-        if (rawHit instanceof PlayerEntity playerTarget && (playerTarget.isCreative() || playerTarget.isSpectator())) {
+        if (rawHit instanceof PlayerEntity playerTarget && isUntargetablePlayer(client, playerTarget)) {
             if (isMain) {
-                expireOrKeepMainSmoothingState();
+                expireOrKeepMainSmoothingState(stack);
                 if (debugMenuEnabled) {
                     renderDebugPanel(ctx, client, stack, rawHit, new DamageBreakdown(), false, isSpear, isUsingThisHand, false, isMain, damageType);
                 }
@@ -151,7 +171,7 @@ public class PreDamageHud {
         if (!(targetEntity instanceof LivingEntity livingTarget)
                 || targetEntity instanceof ArmorStandEntity) {
             if (isMain) {
-                expireOrKeepMainSmoothingState();
+                expireOrKeepMainSmoothingState(stack);
                 if (debugMenuEnabled) {
                     renderDebugPanel(ctx, client, stack, rawHit, new DamageBreakdown(), false, isSpear, isUsingThisHand, false, isMain, damageType);
                 }
@@ -297,6 +317,14 @@ public class PreDamageHud {
             finalValue = 0.0f;
             breakdown.immune = true;
         }
+
+        // Armadillo rolled-up reduction (vanilla formula: (damage - 1) / 2)
+        if (livingTarget instanceof ArmadilloEntity armadillo && !isHealing && overrideText == null) {
+            if (armadillo.isRolledUp() && finalValue > 0.0f) {
+                finalValue = Math.max(0.0f, (finalValue - 1.0f) * 0.5f);
+            }
+        }
+
         if (livingTarget instanceof EndermanEntity && isProjectile && overrideText == null) {
             finalValue = 0.0f;
             breakdown.immune = true;
@@ -326,6 +354,21 @@ public class PreDamageHud {
         breakdown.finalDamage = finalValue;
         breakdown.healing = isHealing;
 
+        // Log prediction before rendering
+        if (!isHealing && finalValue > 0.0f) {
+            DamageLogger.logPrediction(
+                    client,
+                    livingTarget,
+                    stack,
+                    finalValue,
+                    (int) breakdown.armor,
+                    (int) breakdown.toughness,
+                    breakdown.resistanceLevel,
+                    getLogProjectileCode(stack, isProjectile, isExplosion, isSplash, isLingering, isSnowball),
+                    buildLogBonusFlags(isCrit, breakdown)
+            );
+        }
+
         String suffix = "";
         if (isCrit && !isProjectile && !isExplosion && !isSpear && !isSplash && !isLingering) {
             suffix = "^";
@@ -346,6 +389,12 @@ public class PreDamageHud {
         int configuredColor = applyConfiguredColor(finalColor);
 
         if (isMain) {
+
+            // If smash was just consumed, invalidate smoothing immediately
+            if (SMASH_STATE.wasJustConsumed()) {
+                resetMainSmoothingState();
+            }
+
             mainTarget = finalValue;
             if (noSmoothing || overrideText != null) {
                 mainDisplayed = mainTarget;
@@ -401,6 +450,38 @@ public class PreDamageHud {
         debugKeyHeld = keyDown;
     }
 
+    private static int getLogProjectileCode(
+            ItemStack stack,
+            boolean isProjectile,
+            boolean isExplosion,
+            boolean isSplash,
+            boolean isLingering,
+            boolean isSnowball
+    ) {
+        if (isExplosion) return 3;
+        if (isSplash) return 4;
+        if (isLingering) return 5;
+        if (isSnowball) return 6;
+        if (stack.isOf(Items.TRIDENT) && isProjectile) return 2;
+        return isProjectile ? 1 : 0;
+    }
+
+    private static String buildLogBonusFlags(boolean isCrit, DamageBreakdown breakdown) {
+        StringBuilder flags = new StringBuilder();
+        appendLogFlag(flags, "CR", isCrit);
+        appendLogFlag(flags, "SM", breakdown.maceFallBonus > 0.0f);
+        appendLogFlag(flags, "SP", breakdown.spearVelocityBonus > 0.0f);
+        appendLogFlag(flags, "CW", breakdown.cooldownWarning);
+        appendLogFlag(flags, "HW", breakdown.hurtWindowWarning);
+        return flags.toString();
+    }
+
+    private static void appendLogFlag(StringBuilder flags, String flag, boolean enabled) {
+        if (!enabled) return;
+        if (!flags.isEmpty()) flags.append('|');
+        flags.append(flag);
+    }
+
     private static boolean isSpearWeapon(ItemStack stack) {
         boolean hasSpearComponents = stack.contains(DataComponentTypes.KINETIC_WEAPON) && stack.contains(DataComponentTypes.PIERCING_WEAPON);
         if (hasSpearComponents) return true;
@@ -454,6 +535,7 @@ public class PreDamageHud {
             if (client.crosshairTarget instanceof EntityHitResult hit) {
                 Entity crosshairEntity = hit.getEntity();
                 if (crosshairEntity != null
+                        && isTargetableEntity(client, crosshairEntity)
                         && withinHorizontalLimit(camera, crosshairEntity, profile.horizontalLimit)
                         && hasClearLineOfSight(camera, crosshairEntity)) {
                     return crosshairEntity;
@@ -461,7 +543,7 @@ public class PreDamageHud {
             }
 
             Box scanBox = camera.getBoundingBox().expand(profile.horizontalLimit, profile.maxDistance, profile.horizontalLimit);
-            return client.world.getOtherEntities(camera, scanBox, entity -> !entity.isSpectator() && entity.canHit() && withinHorizontalLimit(camera, entity, profile.horizontalLimit))
+            return client.world.getOtherEntities(camera, scanBox, entity -> isTargetableEntity(client, entity) && withinHorizontalLimit(camera, entity, profile.horizontalLimit))
                     .stream()
                     .filter(entity -> hasClearLineOfSight(camera, entity))
                     .min(Comparator.comparingDouble(entity -> Math.abs(entity.getY() - camera.getY())))
@@ -486,7 +568,7 @@ public class PreDamageHud {
 
         if (client.crosshairTarget instanceof EntityHitResult hit) {
             Entity crosshairEntity = hit.getEntity();
-            if (isValidRayTarget(camera, crosshairEntity, start, end, firstBlockDistanceSquared, maxDistanceSquared)) {
+            if (isValidRayTarget(client, camera, crosshairEntity, start, end, firstBlockDistanceSquared, maxDistanceSquared)) {
                 return crosshairEntity;
             }
         }
@@ -496,17 +578,17 @@ public class PreDamageHud {
                 start,
                 end,
                 camera.getBoundingBox().stretch(rotation.multiply(profile.maxDistance)).expand(0.35d),
-                entity -> !entity.isSpectator() && entity.canHit(),
+                entity -> isTargetableEntity(client, entity),
                 firstBlockDistanceSquared
         );
-        if (raycast != null && isValidRayTarget(camera, raycast.getEntity(), start, end, firstBlockDistanceSquared, maxDistanceSquared)) {
+        if (raycast != null && isValidRayTarget(client, camera, raycast.getEntity(), start, end, firstBlockDistanceSquared, maxDistanceSquared)) {
             return raycast.getEntity();
         }
 
         Box searchBox = camera.getBoundingBox().stretch(rotation.multiply(profile.maxDistance)).expand(0.35d);
         Entity best = null;
         double bestDistanceSquared = firstBlockDistanceSquared;
-        for (Entity candidate : client.world.getOtherEntities(camera, searchBox, entity -> !entity.isSpectator() && entity.canHit())) {
+        for (Entity candidate : client.world.getOtherEntities(camera, searchBox, entity -> isTargetableEntity(client, entity))) {
             double candidateDistanceSquared = getRayHitDistanceSquared(start, end, candidate);
             if (candidateDistanceSquared < 0.0d || candidateDistanceSquared > bestDistanceSquared + 1.0E-5) {
                 continue;
@@ -520,13 +602,40 @@ public class PreDamageHud {
         return best;
     }
 
-    private static boolean isValidRayTarget(Entity source, Entity target, Vec3d start, Vec3d end, double blockDistanceSquared, double maxDistanceSquared) {
-        if (target == null || target.isSpectator() || !target.canHit()) return false;
+    private static boolean isValidRayTarget(MinecraftClient client, Entity source, Entity target, Vec3d start, Vec3d end, double blockDistanceSquared, double maxDistanceSquared) {
+        if (!isTargetableEntity(client, target)) return false;
         double hitDistanceSquared = getRayHitDistanceSquared(start, end, target);
         if (hitDistanceSquared < 0.0d) return false;
         if (hitDistanceSquared > maxDistanceSquared + 1.0E-5) return false;
         if (hitDistanceSquared > blockDistanceSquared + 1.0E-5) return false;
         return hasClearLineOfSight(source, target);
+    }
+
+    private static boolean isTargetableEntity(MinecraftClient client, Entity entity) {
+        if (entity == null || !entity.canHit() || entity.isSpectator()) {
+            return false;
+        }
+        return !(entity instanceof PlayerEntity player && isUntargetablePlayer(client, player));
+    }
+
+    private static boolean isUntargetablePlayer(MinecraftClient client, PlayerEntity player) {
+        // Prefer network gamemode when available (authoritative)
+        if (client.getNetworkHandler() != null) {
+            PlayerListEntry entry = client.getNetworkHandler().getPlayerListEntry(player.getUuid());
+            if (entry != null && entry.getGameMode() != null) {
+                GameMode gameMode = entry.getGameMode();
+                if (gameMode == GameMode.CREATIVE || gameMode == GameMode.SPECTATOR) {
+                    return true;
+                }
+                // Explicitly allow SURVIVAL / ADVENTURE even if local flags still desynced
+                if (gameMode == GameMode.SURVIVAL || gameMode == GameMode.ADVENTURE) {
+                    return false;
+                }
+            }
+        }
+
+        // Fallback to entity flags (can be briefly stale during transitions)
+        return player.isCreative() || player.isSpectator();
     }
 
     private static double getRayHitDistanceSquared(Vec3d start, Vec3d end, Entity entity) {
@@ -648,20 +757,27 @@ public class PreDamageHud {
         float total = baseDamage + strengthBonus + weaknessPenalty;
 
         if (stack.isOf(Items.MACE)) {
-            float fallDistance = (float) player.fallDistance;
+
+            float fallDistance = SMASH_STATE.getTrackedFallDistance();
             breakdown.maceFallDistance = fallDistance;
 
-            if (fallDistance > 1.5f && !player.isGliding()) {
-                float smashBonus = (fallDistance <= 3.0f)
-                        ? fallDistance * 4.0f
-                        : (fallDistance <= 8.0f
-                        ? 12.0f + ((fallDistance - 3.0f) * 2.0f)
-                        : 22.0f + (fallDistance - 8.0f));
-                var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
-                int density = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.DENSITY), stack);
-                smashBonus += density * 0.5f * fallDistance;
-                breakdown.maceFallBonus = smashBonus;
-                total += smashBonus;
+            if (SMASH_STATE.canApplySmash()) {
+                if (SMASH_STATE.consumeIfSwinging(client)) {
+                    breakdown.maceFallDistance = SMASH_STATE.getTrackedFallDistance();
+                } else {
+                    float smashBonus = (fallDistance <= 3.0f)
+                            ? fallDistance * 4.0f
+                            : (fallDistance <= 8.0f
+                            ? 12.0f + ((fallDistance - 3.0f) * 2.0f)
+                            : 22.0f + (fallDistance - 8.0f));
+
+                    var reg = client.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
+                    int density = EnchantmentHelper.getLevel(reg.getOrThrow(Enchantments.DENSITY), stack);
+                    smashBonus += density * 0.5f * fallDistance;
+
+                    breakdown.maceFallBonus = smashBonus;
+                    total += smashBonus;
+                }
             }
         }
 
@@ -912,9 +1028,10 @@ public class PreDamageHud {
             result.armorPenalty += Math.max(0.0f, beforeWitchResistance - result.afterArmor);
         }
 
-        result.resistanceLevel = getDetectableResistanceLevel(target);
-        result.resistanceInferredFromParticles = result.resistanceLevel > 0
-                && getStatusEffectLevel(target, StatusEffects.RESISTANCE) == 0;
+        result.resistanceLevel = ResistanceStateManager.resolveResistanceLevel(client, target);
+        result.resistanceInferredFromParticles =
+                result.resistanceLevel > 0
+                && !target.hasStatusEffect(StatusEffects.RESISTANCE);
         result.resistanceMultiplier = result.resistanceLevel > 0
                 ? Math.max(0.0f, 1.0f - result.resistanceLevel * 0.2f)
                 : 1.0f;
@@ -1072,42 +1189,7 @@ public class PreDamageHud {
         return 0;
     }
 
-    private static int getDetectableResistanceLevel(LivingEntity target) {
-        int directLevel = getStatusEffectLevel(target, StatusEffects.RESISTANCE);
-        if (directLevel > 0) {
-            return directLevel;
-        }
-        return hasStatusEffectParticle(target, StatusEffects.RESISTANCE) ? PARTICLE_INFERRED_RESISTANCE_LEVEL : 0;
-    }
 
-    private static boolean hasStatusEffectParticle(LivingEntity target, RegistryEntry<StatusEffect> effect) {
-        try {
-            List<ParticleEffect> particles = target.getDataTracker().get(LivingEntityAccessor.predamage$getPotionSwirls());
-            int expectedRgb = effect.value().getColor() & 0x00FFFFFF;
-            for (ParticleEffect particle : particles) {
-                if (particle instanceof TintedParticleEffect tinted && colorDistanceSquared(toRgb(tinted), expectedRgb) <= 9) {
-                    return true;
-                }
-            }
-        } catch (Throwable ignored) {
-            // Other clients may not expose the tracked particle list exactly like vanilla; direct effect sync remains the fallback.
-        }
-        return false;
-    }
-
-    private static int toRgb(TintedParticleEffect particle) {
-        int red = MathHelper.clamp(Math.round(particle.getRed() * 255.0f), 0, 255);
-        int green = MathHelper.clamp(Math.round(particle.getGreen() * 255.0f), 0, 255);
-        int blue = MathHelper.clamp(Math.round(particle.getBlue() * 255.0f), 0, 255);
-        return (red << 16) | (green << 8) | blue;
-    }
-
-    private static int colorDistanceSquared(int leftRgb, int rightRgb) {
-        int red = ((leftRgb >> 16) & 0xFF) - ((rightRgb >> 16) & 0xFF);
-        int green = ((leftRgb >> 8) & 0xFF) - ((rightRgb >> 8) & 0xFF);
-        int blue = (leftRgb & 0xFF) - (rightRgb & 0xFF);
-        return red * red + green * green + blue * blue;
-    }
 
     private static boolean isBlockedByShield(Entity attacker, LivingEntity target) {
         if (!target.isBlocking()) return false;
@@ -1450,6 +1532,14 @@ public class PreDamageHud {
         if (mainLastTargetTimestampMs <= 0L || now - mainLastTargetTimestampMs > TARGET_LOSS_GRACE_MS) {
             resetMainSmoothingState();
         }
+    }
+
+    private static void expireOrKeepMainSmoothingState(ItemStack stack) {
+        if (stack.isOf(Items.MACE)) {
+            resetMainSmoothingState();
+            return;
+        }
+        expireOrKeepMainSmoothingState();
     }
 
     private record ReachProfile(float maxDistance, boolean maceVerticalOnly, float horizontalLimit) {
